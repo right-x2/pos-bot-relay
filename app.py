@@ -1119,16 +1119,29 @@ class RelayBot(ActivityHandler):
                         )
                     )
 
-                    CARD_CACHE[
-                        image_request_id
-                    ] = {
-                        "question": (
-                            image_question
-                            or "첨부 이미지 분석"
-                        ),
-                        "answer": image_answer,
+                    image_response_json = (
+                       image_result.get("response_json")
+                       if isinstance(
+                           image_result.get("response_json"),
+                           dict,
+                       )
+                       else {}
+                    )
+                    CARD_CACHE[image_request_id] = {
+                       "question": (
+                           image_question
+                           or "첨부 이미지 분석"
+                       ),
+                       "answer": image_answer,
+                       "logRegDt": image_response_json.get(
+                           "logRegDt"
+                       ),
+                       "logSeq": image_response_json.get(
+                           "logSeq"
+                       ),
+                       "feedbackSubmitted": False,
+                       "feedbackProcessing": False,
                     }
-
                     card_attachment = (
                         create_answer_card(
                             question=(
