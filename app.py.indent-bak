@@ -1,0 +1,177 @@
+import json
+import os
+import sys
+import traceback
+
+import aiohttp
+from aiohttp import web
+from botbuilder.core import (
+    ActivityHandler,
+    MessageFactory,
+    TurnContext,
+)
+from botbuilder.core.integration import aiohttp_error_middleware
+from botbuilder.integration.aiohttp import (
+    CloudAdapter,
+    ConfigurationBotFrameworkAuthentication,
+)
+from botbuilder.schema import ChannelAccount
+
+
+class Config:
+    PORT = int(os.getenv("PORT", "3978"))
+
+    APP_ID = os.getenv("MicrosoftAppId", "")
+    APP_PASSWORD = os.getenv("MicrosoftAppPassword", "")
+    APP_TYPE = os.getenv("MicrosoftAppType", "SingleTenant")
+    APP_TENANTID = os.getenv("MicrosoftAppTenantId", "")
+
+    # VM에서 접근하는 회사 NAT 주소
+    INTERNAL_API_URL = os.getenv(
+        "INTERNAL_API_URL",
+        "http://123.111.174.78:30002/test",
+    )
+
+
+CONFIG = Config()
+
+ADAPTER = CloudAdapter(
+    ConfigurationBotFrameworkAuthentication(CONFIG)
+)
+
+
+async def on_error(
+    turn_context: TurnContext,
+    error: Exception,
+) -> None:
+    print(
+        f"[BOT ERROR] {type(error).__name__}: {error}",
+        file=sys.stderr,
+    )
+    traceback.print_exc()
+
+    try:
+        await turn_context.send_activity(
+            "봇 처리 중 오류가 발생했습니다. VM 로그를 확인해주세요."
+        )
+    except Exception:
+        pass
+
+
+ADAPTER.on_turn_error = on_error
+
+
+class RelayBot(ActivityHandler):
+
+    async def on_members_added_activity(
+        self,
+        members_added: list[ChannelAccount],
+        turn_context: TurnContext,
+    ) -> None:
+        for member in members_added:
+            if member.id != turn_context.activity.recipient.id:
+                await turn_context.send_activity(
+                    "POS FAQ 중계 봇 연결 완료 ✅"
+                )
+
+    async def on_message_activity(
+        self,
+        turn_context: TurnContext,
+    ) -> None:
+        message = (turn_context.activity.text or "").strip()
+        sender = turn_context.activity.from_property
+
+        print(
+            "[MESSAGE]"
+            f" channel={turn_context.activity.channel_id}"
+            f" user={sender.name if sender else ''}"
+            f" text={message}"
+        )
+
+        payload = {
+            "message": message,
+            "user_id": sender.id if sender else None,
+            "user_name": sender.name if sender else None,
+            "channel_id": turn_context.activity.channel_id,
+            "conversation_id": (
+                turn_context.activity.conversation.id
+                if turn_context.activity.conversation
+                else None
+            ),
+            "request_time": datetime.now(timezone.utc).isoformat(),
+        }
+
+        timeout = aiohttp.ClientTimeout(total=15)
+
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    CONFIG.INTERNAL_API_URL,
+                    json=payload,
+                ) as response:
+                    response_text = await response.text()
+                    status_code = response.status
+
+           try:
+                rag_result = json.loads(response_text)
+           except json.JSONDecodeError:
+                rag_result = {}
+
+            rest_cd = str(rag_result.get("restCd", ""))
+            rest_msg = str(rag_result.get("restMsg", ""))
+            answer = str(rag_result.get("answer", "")).strip()
+
+            if status_code == 200 and answer:
+                await turn_context.send_activity(answer)
+            else:
+                error_message = rest_msg or response_text
+
+                await turn_context.send_activity(
+                    "RAG 서버 응답 중 오류가 발생했습니다.\n\n"
+                    f"HTTP 상태: {status_code}\n"
+                    f"응답 코드: {rest_cd}\n"
+                    f"메시지: {error_message}"
+                )
+        except Exception as error:
+            print(
+                f"[INTERNAL API ERROR] "
+                f"{type(error).__name__}: {error}",
+                file=sys.stderr,
+            )
+
+            await turn_context.send_activity(
+                "⚠️ Teams → VM 메시지 수신은 성공했지만 "
+                "VM → 내부 서버 호출은 실패했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+
+
+BOT = RelayBot()
+
+
+async def messages(request: web.Request) -> web.Response:
+    return await ADAPTER.process(request, BOT)
+
+
+async def health(_: web.Request) -> web.Response:
+    return web.json_response(
+        {
+            "status": "ok",
+            "service": "pos-bot-relay",
+            "internal_api_configured": bool(CONFIG.INTERNAL_API_URL),
+            "server_time": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+
+APP = web.Application(middlewares=[aiohttp_error_middleware])
+APP.router.add_get("/health", health)
+APP.router.add_post("/api/messages", messages)
+
+
+if __name__ == "__main__":
+    web.run_app(
+        APP,
+        host="127.0.0.1",
+        port=CONFIG.PORT,
+    )

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+# Virtual environment
+.venv/
+venv/
+# Secrets and environment
+.env
+.env.*
+!/\.env.example
+# Backups
+*.bak
+*.backup
+*.before-*
+# Logs
+*.log
+logs/
+# Temporary files
+received_images/
+tmp/
+temp/
+# IDE
+.vscode/
+.idea/
+# OS
+.DS_Store
+Thumbs.db
+
