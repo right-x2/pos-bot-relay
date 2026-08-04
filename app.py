@@ -245,14 +245,18 @@ def create_answer_card(
         )
 
     card = {
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-        "type": "AdaptiveCard",
-        "version": "1.3",
-        "body": body,
-        "actions": [
-            helpful_action,
-            not_helpful_action,
-        ],
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "type": "AdaptiveCard",
+       "version": "1.3",
+       "body": body,
+       "actions": (
+           []
+           if selected in ("Y", "N")
+           else [
+               helpful_action,
+               not_helpful_action,
+           ]
+       ),
     }
 
     return adaptive_attachment(card)
@@ -622,41 +626,107 @@ class RelayBot(ActivityHandler):
             return
 
         cached_card = CARD_CACHE.get(request_id)
-
         if not cached_card:
-            await turn_context.send_activity(
-                "피드백은 수신했지만 "
-                "기존 카드 정보를 찾지 못했습니다."
-            )
-            return
-        log_reg_dt = cached_card.get("logRegDt")
-        log_seq = cached_card.get("logSeq")
-
-        payload = {
-           "regDt": log_reg_dt,
-           "seq": int(log_seq),
-           "helpYn": "1" if helpful == "Y" else "0",
-        }
-
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-           async with session.post(
-               CONFIG.FEEDBACK_API_URL,
-               json=payload,
-           ) as response:
-               response_text = await response.text()
-               status_code = response.status
-        result = json.loads(response_text)
-        if status_code != 200 or not result.get("success"):
            await turn_context.send_activity(
-               f"피드백 저장 실패\n\n{response_text}"
+               "피드백은 수신했지만 "
+               "기존 카드 정보를 찾지 못했습니다."
            )
            return
+        # 이미 피드백 저장이 완료된 카드면 재호출 차단
+        if cached_card.get("feedbackSubmitted"):
+           await turn_context.send_activity(
+               "이미 피드백이 제출된 답변입니다."
+           )
+           return
+        # 더블클릭 등으로 API가 동시에 두 번 호출되는 것 방지
+        if cached_card.get("feedbackProcessing"):
+           await turn_context.send_activity(
+               "피드백을 저장하고 있습니다."
+           )
+           return
+        log_reg_dt = cached_card.get("logRegDt")
+        log_seq = cached_card.get("logSeq")
+        if not log_reg_dt or log_seq is None:
+           await turn_context.send_activity(
+               "피드백 저장에 필요한 로그 정보를 찾지 못했습니다."
+           )
+           return
+        cached_card["feedbackProcessing"] = True
+
+        payload = {
+           "regDt": str(log_reg_dt),
+           "seq": int(log_seq),
+           "helpYn": "1" if helpful == "Y" else "0",
+           "feedbackText": feedback_text,
+        }
+        print(
+           "[FEEDBACK API REQUEST]"
+           f" request_id={request_id}"
+           f" reg_dt={payload['regDt']}"
+           f" seq={payload['seq']}"
+           f" help_yn={payload['helpYn']}"
+           f" feedback_text={payload['feedbackText']}",
+           flush=True,
+        )
+        try:
+           timeout = aiohttp.ClientTimeout(total=30)
+           async with aiohttp.ClientSession(
+               timeout=timeout
+           ) as session:
+               async with session.post(
+                   CONFIG.FEEDBACK_API_URL,
+                   json=payload,
+               ) as response:
+                   response_text = await response.text()
+                   status_code = response.status
+           print(
+               "[FEEDBACK API RESPONSE]"
+               f" request_id={request_id}"
+               f" status={status_code}"
+               f" body={response_text[:1000]}",
+               flush=True,
+           )
+           try:
+               result = json.loads(response_text)
+           except json.JSONDecodeError:
+               result = {}
+           if status_code != 200 or not result.get("success"):
+               cached_card["feedbackProcessing"] = False
+               await turn_context.send_activity(
+                   "피드백 저장에 실패했습니다.\n\n"
+                   f"HTTP 상태: {status_code}\n"
+                   f"응답: {response_text}"
+               )
+               return
+        except Exception as feedback_error:
+           cached_card["feedbackProcessing"] = False
+           print(
+               "[FEEDBACK API ERROR]"
+               f" request_id={request_id}"
+               f" type={type(feedback_error).__name__}"
+               f" message={feedback_error}",
+               file=sys.stderr,
+               flush=True,
+           )
+           await turn_context.send_activity(
+               "피드백 API 호출 중 오류가 발생했습니다.\n\n"
+               f"{type(feedback_error).__name__}: "
+               f"{feedback_error}"
+           )
+           return
+        # API 저장에 성공한 경우에만 제출 완료 처리
+        cached_card["feedbackProcessing"] = False
+        cached_card["feedbackSubmitted"] = True
+        cached_card["selectedFeedback"] = helpful
+        cached_card["feedbackText"] = feedback_text
+
         updated_attachment = create_answer_card(
             question=cached_card["question"],
             answer=cached_card["answer"],
             request_id=request_id,
             selected=helpful,
         )
+        
 
         updated = await self.update_source_card(
             turn_context,
@@ -1394,10 +1464,12 @@ class RelayBot(ActivityHandler):
 
             if status_code == 200 and answer:
                 CARD_CACHE[request_id] = {
-                    "question": message,
-                    "answer": answer,
-                    "logRegDt": rag_result.get("logRegDt"),
-                    "logSeq": rag_result.get("logSeq"),
+                   "question": message,
+                   "answer": answer,
+                   "logRegDt": rag_result.get("logRegDt"),
+                   "logSeq": rag_result.get("logSeq"),
+                   "feedbackSubmitted": False,
+                   "feedbackProcessing": False,
                 }
 
                 if len(CARD_CACHE) > 1000:
