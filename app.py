@@ -697,37 +697,29 @@ class RelayBot(ActivityHandler):
            f" feedback_text={payload['feedbackText']}",
            flush=True,
         )
+        
         timeout = aiohttp.ClientTimeout(
-           total=120
-        )
-        typing_stop_event = asyncio.Event()
-        typing_task = asyncio.create_task(
+           total=30
+       )
+       typing_stop_event = asyncio.Event()
+       typing_task = asyncio.create_task(
            keep_typing(
                turn_context,
                typing_stop_event,
            )
-        )
-        try:
+       )
+       try:
            async with aiohttp.ClientSession(
                timeout=timeout
            ) as session:
                async with session.post(
-                   CONFIG.INTERNAL_API_URL,
+                   CONFIG.FEEDBACK_API_URL,
                    json=payload,
                ) as response:
-                   response_text = await response.text()
+                   response_text = (
+                       await response.text()
+                   )
                    status_code = response.status
-        finally:
-           typing_stop_event.set()
-           try:
-               await typing_task
-           except Exception as typing_error:
-               print(
-                   "[TYPING TASK ERROR]"
-                   f" type={type(typing_error).__name__}"
-                   f" message={typing_error}",
-                   flush=True,
-               )
            print(
                "[FEEDBACK API RESPONSE]"
                f" request_id={request_id}"
@@ -736,38 +728,61 @@ class RelayBot(ActivityHandler):
                flush=True,
            )
            try:
-               result = json.loads(response_text)
+               result = json.loads(
+                   response_text
+               )
            except json.JSONDecodeError:
                result = {}
-           if status_code != 200 or not result.get("success"):
-               cached_card["feedbackProcessing"] = False
+           if (
+               status_code != 200
+               or not result.get("success")
+           ):
+               cached_card[
+                   "feedbackProcessing"
+               ] = False
                await turn_context.send_activity(
                    "피드백 저장에 실패했습니다.\n\n"
                    f"HTTP 상태: {status_code}\n"
                    f"응답: {response_text}"
                )
                return
-        except Exception as feedback_error:
-           cached_card["feedbackProcessing"] = False
+       except Exception as feedback_error:
+           cached_card[
+               "feedbackProcessing"
+           ] = False
            print(
                "[FEEDBACK API ERROR]"
                f" request_id={request_id}"
-               f" type={type(feedback_error).__name__}"
+               f" type="
+               f"{type(feedback_error).__name__}"
                f" message={feedback_error}",
                file=sys.stderr,
                flush=True,
            )
            await turn_context.send_activity(
-               "피드백 API 호출 중 오류가 발생했습니다.\n\n"
+               "피드백 API 호출 중 오류가 "
+               "발생했습니다.\n\n"
                f"{type(feedback_error).__name__}: "
                f"{feedback_error}"
            )
            return
-        # API 저장에 성공한 경우에만 제출 완료 처리
-        cached_card["feedbackProcessing"] = False
-        cached_card["feedbackSubmitted"] = True
-        cached_card["selectedFeedback"] = helpful
-        cached_card["feedbackText"] = feedback_text
+       finally:
+           typing_stop_event.set()
+           try:
+               await typing_task
+           except Exception as typing_error:
+               print(
+                   "[TYPING TASK ERROR]"
+                   f" type="
+                   f"{type(typing_error).__name__}"
+                   f" message={typing_error}",
+                   flush=True,
+               )
+       # API 저장에 성공한 경우에만 제출 완료 처리
+       cached_card["feedbackProcessing"] = False
+       cached_card["feedbackSubmitted"] = True
+       cached_card["selectedFeedback"] = helpful
+       cached_card["feedbackText"] = feedback_text
 
         updated_attachment = create_answer_card(
             question=cached_card["question"],
