@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sys
@@ -83,6 +84,34 @@ async def on_error(
 
 
 ADAPTER.on_turn_error = on_error
+
+async def keep_typing(
+   turn_context: TurnContext,
+   stop_event: asyncio.Event,
+) -> None:
+   """
+   응답이 끝날 때까지 Teams typing activity를 주기적으로 전송한다.
+   """
+   while not stop_event.is_set():
+       try:
+           await turn_context.send_activity(
+               Activity(type="typing")
+           )
+       except Exception as error:
+           print(
+               "[TYPING ERROR]"
+               f" type={type(error).__name__}"
+               f" message={error}",
+               flush=True,
+           )
+       try:
+           await asyncio.wait_for(
+               stop_event.wait(),
+               timeout=4,
+           )
+       except asyncio.TimeoutError:
+           pass
+
 
 # 개발용 메모리 캐시
 CARD_CACHE: dict[str, dict[str, str]] = {}
@@ -668,17 +697,37 @@ class RelayBot(ActivityHandler):
            f" feedback_text={payload['feedbackText']}",
            flush=True,
         )
+        timeout = aiohttp.ClientTimeout(
+           total=120
+        )
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(
+           keep_typing(
+               turn_context,
+               typing_stop_event,
+           )
+        )
         try:
-           timeout = aiohttp.ClientTimeout(total=30)
            async with aiohttp.ClientSession(
                timeout=timeout
            ) as session:
                async with session.post(
-                   CONFIG.FEEDBACK_API_URL,
+                   CONFIG.INTERNAL_API_URL,
                    json=payload,
                ) as response:
                    response_text = await response.text()
                    status_code = response.status
+        finally:
+           typing_stop_event.set()
+           try:
+               await typing_task
+           except Exception as typing_error:
+               print(
+                   "[TYPING TASK ERROR]"
+                   f" type={type(typing_error).__name__}"
+                   f" message={typing_error}",
+                   flush=True,
+               )
            print(
                "[FEEDBACK API RESPONSE]"
                f" request_id={request_id}"
@@ -1070,38 +1119,48 @@ class RelayBot(ActivityHandler):
                     )
                     return
 
-                image_result = (
-                    await forward_teams_image(
-                        turn_context,
-                        app_id=CONFIG.APP_ID,
-                        app_password=(
-                            CONFIG.APP_PASSWORD
-                        ),
-                        tenant_id=(
-                            CONFIG.APP_TENANTID
-                        ),
-                        target_url=os.getenv(
-                            "INTERNAL_IMAGE_API_URL",
-                            (
-                                "http://"
-                                "123.111.174.78:"
-                                "30002/image-chat"
-                            ),
-                        ),
-                        request_id=(
-                            image_request_id
-                        ),
-                        user_id=(
-                            teams_account_id
-                        ),
-                        user_name=(
-                            teams_user_name
-                        ),
-                        question=(
-                            image_question
-                        ),
-                    )
+                typing_stop_event = asyncio.Event()
+                typing_task = asyncio.create_task(
+                   keep_typing(
+                       turn_context,
+                       typing_stop_event,
+                   )
                 )
+                try:
+                   image_result = await forward_teams_image(
+                       turn_context,
+                       app_id=CONFIG.APP_ID,
+                       app_password=(
+                           CONFIG.APP_PASSWORD
+                       ),
+                       tenant_id=(
+                           CONFIG.APP_TENANTID
+                       ),
+                       target_url=os.getenv(
+                           "INTERNAL_IMAGE_API_URL",
+                           (
+                               "http://"
+                               "123.111.174.78:"
+                               "30002/image-chat"
+                           ),
+                       ),
+                       request_id=image_request_id,
+                       user_id=teams_account_id,
+                       user_name=teams_user_name,
+                       question=image_question,
+                   )
+                finally:
+                   typing_stop_event.set()
+                   try:
+                       await typing_task
+                   except Exception as typing_error:
+                       print(
+                           "[IMAGE TYPING TASK ERROR]"
+                           f" request_id={image_request_id}"
+                           f" type={type(typing_error).__name__}"
+                           f" message={typing_error}",
+                           flush=True,
+                       )
 
                 if image_result is None:
                     raise RuntimeError(
