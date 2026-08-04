@@ -51,6 +51,10 @@ class Config:
         "http://123.111.174.78:30002/faq-register",
     )
 
+    FEEDBACK_API_URL = os.getenv(
+       "FEEDBACK_API_URL",
+       "http://123.111.174.78:30002/api/logs/help-yn",
+    )
 
 CONFIG = Config()
 
@@ -625,7 +629,28 @@ class RelayBot(ActivityHandler):
                 "기존 카드 정보를 찾지 못했습니다."
             )
             return
+        log_reg_dt = cached_card.get("logRegDt")
+        log_seq = cached_card.get("logSeq")
 
+        payload = {
+           "regDt": log_reg_dt,
+           "seq": int(log_seq),
+           "helpYn": "1" if helpful == "Y" else "0",
+        }
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+           async with session.post(
+               CONFIG.FEEDBACK_API_URL,
+               json=payload,
+           ) as response:
+               response_text = await response.text()
+               status_code = response.status
+        result = json.loads(response_text)
+        if status_code != 200 or not result.get("success"):
+           await turn_context.send_activity(
+               f"피드백 저장 실패\n\n{response_text}"
+           )
+           return
         updated_attachment = create_answer_card(
             question=cached_card["question"],
             answer=cached_card["answer"],
@@ -1371,6 +1396,8 @@ class RelayBot(ActivityHandler):
                 CARD_CACHE[request_id] = {
                     "question": message,
                     "answer": answer,
+                    "logRegDt": rag_result.get("logRegDt"),
+                    "logSeq": rag_result.get("logSeq"),
                 }
 
                 if len(CARD_CACHE) > 1000:
