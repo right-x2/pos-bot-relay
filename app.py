@@ -34,6 +34,18 @@ from botbuilder.schema import (
 CATEGORIES = ["POS공통", "APOS", "키오스크", "PPOS", "POS서버", "HBO"]
 KST = timezone(timedelta(hours=9))
 
+TOOL_POS_MASTER_CREATE = "pos_master_create"
+TOOL_PRODUCT_SEARCH = "product_search"
+TOOL_PATTERN_UPDATE = "pattern_update"
+TOOL_GENERAL_CHAT = "general_chat"
+
+TOOL_TITLES = {
+    TOOL_POS_MASTER_CREATE: "POS 마스터 생성",
+    TOOL_PRODUCT_SEARCH: "상·단품 검색",
+    TOOL_PATTERN_UPDATE: "패턴 수정",
+    TOOL_GENERAL_CHAT: "일반 질문",
+}
+
 
 class Config:
     PORT = int(os.getenv("PORT", "3978"))
@@ -122,6 +134,214 @@ def adaptive_attachment(card: dict) -> Attachment:
         content_type="application/vnd.microsoft.card.adaptive",
         content=card,
     )
+
+
+def create_tool_menu_card() -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "POS 업무 도구",
+                "weight": "Bolder",
+                "size": "Medium",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": "처리할 업무를 선택해주세요.",
+                "isSubtle": True,
+                "wrap": True,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "POS 마스터 생성",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_POS_MASTER_CREATE,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "상·단품 검색",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_PRODUCT_SEARCH,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "패턴 수정",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_PATTERN_UPDATE,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "일반 질문",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_GENERAL_CHAT,
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_pos_master_form_card() -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "POS 마스터 생성",
+                "weight": "Bolder",
+                "size": "Medium",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": (
+                    "생성할 POS 번호를 입력해주세요. "
+                    "현재는 도구 연동을 위한 화면만 동작합니다."
+                ),
+                "isSubtle": True,
+                "wrap": True,
+            },
+            {
+                "type": "Input.Text",
+                "id": "pos_no",
+                "label": "POS 번호",
+                "placeholder": "예: 1111",
+                "isRequired": True,
+                "errorMessage": "POS 번호를 입력해주세요.",
+                "maxLength": 30,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "마스터 생성",
+                "style": "positive",
+                "data": {
+                    "action": "pos_master_create_submit",
+                    "tool": TOOL_POS_MASTER_CREATE,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "도구 메뉴",
+                "data": {
+                    "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_tool_status_card(
+    title: str,
+    message: str,
+) -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": title,
+                "weight": "Bolder",
+                "size": "Medium",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": message,
+                "wrap": True,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "도구 메뉴",
+                "data": {
+                    "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_pos_master_shell_result_card(
+    pos_no: str,
+) -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "POS 마스터 생성 도구 준비 완료",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Good",
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {
+                        "title": "실행 도구",
+                        "value": TOOL_POS_MASTER_CREATE,
+                    },
+                    {
+                        "title": "POS 번호",
+                        "value": pos_no,
+                    },
+                    {
+                        "title": "상태",
+                        "value": "API 연동 대기",
+                    },
+                ],
+            },
+            {
+                "type": "TextBlock",
+                "text": (
+                    "화면과 Action.Submit 라우팅만 연결된 상태입니다. "
+                    "실제 POS 마스터 데이터는 생성하지 않았습니다."
+                ),
+                "isSubtle": True,
+                "wrap": True,
+                "spacing": "Medium",
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "다른 도구 선택",
+                "data": {
+                    "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
 
 
 def create_answer_card(
@@ -551,6 +771,11 @@ class RelayBot(ActivityHandler):
                 await turn_context.send_activity(
                     "POS FAQ 중계 봇 연결 완료 ✅"
                 )
+                await turn_context.send_activity(
+                    MessageFactory.attachment(
+                        create_tool_menu_card()
+                    )
+                )
 
     async def update_source_card(
         self,
@@ -573,6 +798,111 @@ class RelayBot(ActivityHandler):
         )
 
         return True
+
+    async def update_or_send_card(
+        self,
+        turn_context: TurnContext,
+        attachment: Attachment,
+    ) -> None:
+        updated = await self.update_source_card(
+            turn_context,
+            attachment,
+        )
+
+        if not updated:
+            await turn_context.send_activity(
+                MessageFactory.attachment(
+                    attachment
+                )
+            )
+
+    async def handle_tool_menu(
+        self,
+        turn_context: TurnContext,
+    ) -> None:
+        await self.update_or_send_card(
+            turn_context,
+            create_tool_menu_card(),
+        )
+
+    async def handle_tool_select(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        tool_name = str(
+            submit_value.get("tool", "")
+        ).strip()
+
+        if tool_name == TOOL_POS_MASTER_CREATE:
+            attachment = create_pos_master_form_card()
+        elif tool_name == TOOL_GENERAL_CHAT:
+            attachment = create_tool_status_card(
+                "일반 질문",
+                "채팅창에 질문을 입력하면 기존 LLM으로 전달합니다.",
+            )
+        elif tool_name in (
+            TOOL_PRODUCT_SEARCH,
+            TOOL_PATTERN_UPDATE,
+        ):
+            attachment = create_tool_status_card(
+                TOOL_TITLES[tool_name],
+                "도구 선택 라우팅만 준비되어 있습니다.",
+            )
+        else:
+            await turn_context.send_activity(
+                "올바르지 않은 도구 선택입니다."
+            )
+            return
+
+        print(
+            "[TOOL SELECT]"
+            f" tool={tool_name}",
+            flush=True,
+        )
+
+        await self.update_or_send_card(
+            turn_context,
+            attachment,
+        )
+
+    async def handle_pos_master_create_submit(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        pos_no = str(
+            submit_value.get("pos_no", "")
+        ).strip()
+
+        if not pos_no:
+            await turn_context.send_activity(
+                "POS 번호를 입력해주세요."
+            )
+            return
+
+        if len(pos_no) > 30:
+            await turn_context.send_activity(
+                "POS 번호는 30자 이하로 입력해주세요."
+            )
+            return
+
+        sender = turn_context.activity.from_property
+
+        print(
+            "[POS MASTER TOOL SHELL]"
+            f" tool={TOOL_POS_MASTER_CREATE}"
+            f" pos_no={pos_no}"
+            f" user_id={sender.id if sender else ''}",
+            flush=True,
+        )
+
+        await self.update_or_send_card(
+            turn_context,
+            create_pos_master_shell_result_card(
+                pos_no
+            ),
+        )
 
     async def handle_feedback(
         self,
@@ -1398,6 +1728,26 @@ class RelayBot(ActivityHandler):
             submit_value.get("action", "")
         )
 
+        if action == "tool_menu":
+            await self.handle_tool_menu(
+                turn_context
+            )
+            return
+
+        if action == "tool_select":
+            await self.handle_tool_select(
+                turn_context,
+                submit_value,
+            )
+            return
+
+        if action == "pos_master_create_submit":
+            await self.handle_pos_master_create_submit(
+                turn_context,
+                submit_value,
+            )
+            return
+
         if action == "feedback":
             await self.handle_feedback(
                 turn_context,
@@ -1434,6 +1784,30 @@ class RelayBot(ActivityHandler):
             .replace(" ", "")
             .lower()
         )
+
+        if compact_command in {
+            "도구",
+            "도구메뉴",
+            "업무도구",
+            "메뉴",
+        }:
+            await turn_context.send_activity(
+                MessageFactory.attachment(
+                    create_tool_menu_card()
+                )
+            )
+            return
+
+        if compact_command in {
+            "pos마스터생성",
+            "포스마스터생성",
+        }:
+            await turn_context.send_activity(
+                MessageFactory.attachment(
+                    create_pos_master_form_card()
+                )
+            )
+            return
 
         if compact_command in {
             "@등록",
