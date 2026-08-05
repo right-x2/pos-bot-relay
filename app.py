@@ -701,13 +701,6 @@ class RelayBot(ActivityHandler):
         timeout = aiohttp.ClientTimeout(
            total=30
         )
-        typing_stop_event = asyncio.Event()
-        typing_task = asyncio.create_task(
-            keep_typing(
-                turn_context,
-                typing_stop_event,
-            )
-        )
         try:
             async with aiohttp.ClientSession(
                 timeout=timeout
@@ -766,18 +759,6 @@ class RelayBot(ActivityHandler):
                 f"{feedback_error}"
             )
             return
-        finally:
-            typing_stop_event.set()
-            try:
-                await typing_task
-            except Exception as typing_error:
-                print(
-                    "[TYPING TASK ERROR]"
-                    f" type="
-                    f"{type(typing_error).__name__}"
-                    f" message={typing_error}",
-                    flush=True,
-                )
         # API 저장에 성공한 경우에만 제출 완료 처리
         cached_card["feedbackProcessing"] = False
         cached_card["feedbackSubmitted"] = True
