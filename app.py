@@ -1492,6 +1492,14 @@ class RelayBot(ActivityHandler):
             total=120
         )
 
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(
+            keep_typing(
+                turn_context,
+                typing_stop_event,
+            )
+        )
+
         try:
             async with aiohttp.ClientSession(
                 timeout=timeout
@@ -1592,6 +1600,18 @@ class RelayBot(ActivityHandler):
                 "내부 RAG 서버 호출에 실패했습니다.\n\n"
                 f"{type(error).__name__}: {error}"
             )
+        finally:
+            typing_stop_event.set()
+            try:
+                await typing_task
+            except Exception as typing_error:
+                print(
+                    "[MESSAGE TYPING TASK ERROR]"
+                    f" request_id={request_id}"
+                    f" type={type(typing_error).__name__}"
+                    f" message={typing_error}",
+                    flush=True,
+                )
 
 
 BOT = RelayBot()
