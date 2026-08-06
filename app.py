@@ -43,6 +43,7 @@ TOOL_GENERAL_CHAT = "general_chat"
 TOOL_FOOD_KIOSK = "food_kiosk"
 TOOL_FOOD_KIOSK_STORE_CREATE = "food_kiosk_store_create"
 TOOL_FOOD_KIOSK_MENU_CREATE = "food_kiosk_menu_create"
+TOOL_FOOD_KIOSK_SOLD_OUT = "food_kiosk_sold_out"
 
 TOOL_TITLES = {
     TOOL_POS_MASTER_CREATE: "POS 마스터 생성",
@@ -54,6 +55,7 @@ TOOL_TITLES = {
     TOOL_FOOD_KIOSK: "푸드키오스크",
     TOOL_FOOD_KIOSK_STORE_CREATE: "푸드키오스크 매장추가",
     TOOL_FOOD_KIOSK_MENU_CREATE: "푸드키오스크 메뉴추가",
+    TOOL_FOOD_KIOSK_SOLD_OUT: "푸드키오스크 품절처리",
 }
 
 
@@ -321,6 +323,14 @@ def create_food_kiosk_tool_menu_card() -> Attachment:
                 "data": {
                     "action": "tool_select",
                     "tool": TOOL_FOOD_KIOSK_MENU_CREATE,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "품절처리",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_FOOD_KIOSK_SOLD_OUT,
                 },
             },
             {
@@ -1337,6 +1347,7 @@ class RelayBot(ActivityHandler):
         elif tool_name in (
             TOOL_FOOD_KIOSK_STORE_CREATE,
             TOOL_FOOD_KIOSK_MENU_CREATE,
+            TOOL_FOOD_KIOSK_SOLD_OUT,
         ):
             self.clear_pending_search_tool(
                 turn_context
