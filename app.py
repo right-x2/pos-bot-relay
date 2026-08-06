@@ -137,6 +137,79 @@ async def keep_typing(
 
 # 개발용 메모리 캐시
 CARD_CACHE: dict[str, dict[str, str]] = {}
+PENDING_SEARCH_CACHE: dict[str, dict[str, object]] = {}
+PENDING_SEARCH_TTL = timedelta(minutes=5)
+
+
+def get_tool_session_key(
+    activity: Activity,
+) -> str:
+    conversation_id = (
+        activity.conversation.id
+        if activity.conversation
+        else ""
+    )
+    sender = activity.from_property
+    sender_id = sender.id if sender else ""
+
+    return f"{conversation_id}:{sender_id}"
+
+
+def is_barcode_image_attachment(
+    attachment: Attachment,
+) -> bool:
+    content_type = str(
+        attachment.content_type or ""
+    ).strip().lower()
+
+    if content_type.startswith("image/"):
+        return bool(
+            str(
+                attachment.content_url or ""
+            ).strip()
+        )
+
+    content = attachment.content
+
+    if (
+        content_type
+        == "application/vnd.microsoft.teams.file.download.info"
+        and isinstance(content, dict)
+    ):
+        file_type = str(
+            content.get("fileType", "")
+        ).strip().lower().lstrip(".")
+
+        download_url = str(
+            content.get("downloadUrl", "")
+        ).strip()
+
+        return (
+            file_type in {
+                "png",
+                "jpg",
+                "jpeg",
+                "gif",
+                "webp",
+                "bmp",
+            }
+            and bool(download_url)
+        )
+
+    if content_type == "text/html":
+        content_text = (
+            json.dumps(
+                content,
+                ensure_ascii=False,
+                default=str,
+            )
+            if isinstance(content, dict)
+            else str(content or "")
+        )
+
+        return "<img" in content_text.lower()
+
+    return False
 
 
 def adaptive_attachment(card: dict) -> Attachment:
@@ -313,9 +386,15 @@ def create_product_search_tool_menu_card() -> Attachment:
     return adaptive_attachment(card)
 
 
-def create_product_search_status_card(
+def create_product_search_input_card(
     tool_name: str,
 ) -> Attachment:
+    code_label = (
+        "상품코드"
+        if tool_name == TOOL_PRODUCT_LOOKUP
+        else "단품코드"
+    )
+
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -329,26 +408,32 @@ def create_product_search_status_card(
                 "wrap": True,
             },
             {
-                "type": "FactSet",
-                "facts": [
-                    {
-                        "title": "실행 도구",
-                        "value": tool_name,
-                    },
-                    {
-                        "title": "상태",
-                        "value": "API 연동 대기",
-                    },
-                ],
+                "type": "TextBlock",
+                "text": (
+                    f"{code_label}를 입력하거나, 5분 안에 "
+                    "Teams 채팅창에서 바코드 이미지를 첨부해주세요."
+                ),
+                "wrap": True,
+                "isSubtle": True,
             },
             {
-                "type": "TextBlock",
-                "text": "검색 도구 선택 라우팅만 준비되어 있습니다.",
-                "isSubtle": True,
-                "wrap": True,
+                "type": "Input.Text",
+                "id": "search_code",
+                "label": code_label,
+                "placeholder": f"{code_label} 입력",
+                "maxLength": 100,
             },
         ],
         "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "코드로 검색",
+                "style": "positive",
+                "data": {
+                    "action": "product_search_code_submit",
+                    "tool": tool_name,
+                },
+            },
             {
                 "type": "Action.Submit",
                 "title": "상·단품 검색 메뉴",
@@ -362,6 +447,79 @@ def create_product_search_status_card(
                 "title": "전체 도구",
                 "data": {
                     "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_product_search_shell_result_card(
+    tool_name: str,
+    input_type: str,
+    input_value: str,
+) -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"{TOOL_TITLES[tool_name]} 입력 확인",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Good",
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {
+                        "title": "실행 도구",
+                        "value": tool_name,
+                    },
+                    {
+                        "title": "입력 방식",
+                        "value": input_type,
+                    },
+                    {
+                        "title": "입력값",
+                        "value": input_value,
+                    },
+                    {
+                        "title": "상태",
+                        "value": "API 연동 대기",
+                    },
+                ],
+            },
+            {
+                "type": "TextBlock",
+                "text": (
+                    "입력과 도구 라우팅까지만 연결된 상태입니다. "
+                    "실제 검색 API는 호출하지 않았습니다."
+                ),
+                "isSubtle": True,
+                "wrap": True,
+                "spacing": "Medium",
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "다시 검색",
+                "data": {
+                    "action": "tool_select",
+                    "tool": tool_name,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "상·단품 검색 메뉴",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_PRODUCT_SEARCH,
                 },
             },
         ],
@@ -1052,9 +1210,93 @@ class RelayBot(ActivityHandler):
         self,
         turn_context: TurnContext,
     ) -> None:
+        self.clear_pending_search_tool(
+            turn_context
+        )
+
         await self.update_or_send_card(
             turn_context,
             create_tool_menu_card(),
+        )
+
+    def set_pending_search_tool(
+        self,
+        turn_context: TurnContext,
+        tool_name: str,
+    ) -> None:
+        session_key = get_tool_session_key(
+            turn_context.activity
+        )
+
+        PENDING_SEARCH_CACHE[session_key] = {
+            "tool": tool_name,
+            "expires_at": (
+                datetime.now(KST)
+                + PENDING_SEARCH_TTL
+            ),
+        }
+
+        if len(PENDING_SEARCH_CACHE) > 1000:
+            oldest_key = next(
+                iter(PENDING_SEARCH_CACHE)
+            )
+            PENDING_SEARCH_CACHE.pop(
+                oldest_key,
+                None,
+            )
+
+    def get_pending_search_tool(
+        self,
+        turn_context: TurnContext,
+    ) -> str:
+        session_key = get_tool_session_key(
+            turn_context.activity
+        )
+        pending = PENDING_SEARCH_CACHE.get(
+            session_key
+        )
+
+        if not pending:
+            return ""
+
+        expires_at = pending.get("expires_at")
+
+        if (
+            not isinstance(expires_at, datetime)
+            or datetime.now(KST) >= expires_at
+        ):
+            PENDING_SEARCH_CACHE.pop(
+                session_key,
+                None,
+            )
+            return ""
+
+        tool_name = str(
+            pending.get("tool", "")
+        )
+
+        if tool_name not in (
+            TOOL_PRODUCT_LOOKUP,
+            TOOL_SINGLE_PRODUCT_LOOKUP,
+        ):
+            PENDING_SEARCH_CACHE.pop(
+                session_key,
+                None,
+            )
+            return ""
+
+        return tool_name
+
+    def clear_pending_search_tool(
+        self,
+        turn_context: TurnContext,
+    ) -> None:
+        session_key = get_tool_session_key(
+            turn_context.activity
+        )
+        PENDING_SEARCH_CACHE.pop(
+            session_key,
+            None,
         )
 
     async def handle_tool_select(
@@ -1067,31 +1309,53 @@ class RelayBot(ActivityHandler):
         ).strip()
 
         if tool_name == TOOL_POS_MASTER_CREATE:
+            self.clear_pending_search_tool(
+                turn_context
+            )
             attachment = create_pos_master_form_card()
         elif tool_name == TOOL_PRODUCT_SEARCH:
+            self.clear_pending_search_tool(
+                turn_context
+            )
             attachment = create_product_search_tool_menu_card()
         elif tool_name in (
             TOOL_PRODUCT_LOOKUP,
             TOOL_SINGLE_PRODUCT_LOOKUP,
         ):
-            attachment = create_product_search_status_card(
+            self.set_pending_search_tool(
+                turn_context,
+                tool_name
+            )
+            attachment = create_product_search_input_card(
                 tool_name
             )
         elif tool_name == TOOL_FOOD_KIOSK:
+            self.clear_pending_search_tool(
+                turn_context
+            )
             attachment = create_food_kiosk_tool_menu_card()
         elif tool_name in (
             TOOL_FOOD_KIOSK_STORE_CREATE,
             TOOL_FOOD_KIOSK_MENU_CREATE,
         ):
+            self.clear_pending_search_tool(
+                turn_context
+            )
             attachment = create_food_kiosk_status_card(
                 tool_name
             )
         elif tool_name == TOOL_GENERAL_CHAT:
+            self.clear_pending_search_tool(
+                turn_context
+            )
             attachment = create_tool_status_card(
                 "일반 질문",
                 "채팅창에 질문을 입력하면 기존 LLM으로 전달합니다.",
             )
         elif tool_name == TOOL_PATTERN_UPDATE:
+            self.clear_pending_search_tool(
+                turn_context
+            )
             attachment = create_tool_status_card(
                 TOOL_TITLES[tool_name],
                 "도구 선택 라우팅만 준비되어 있습니다.",
@@ -1111,6 +1375,128 @@ class RelayBot(ActivityHandler):
         await self.update_or_send_card(
             turn_context,
             attachment,
+        )
+
+    async def handle_product_search_code_submit(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        tool_name = str(
+            submit_value.get("tool", "")
+        ).strip()
+        search_code = str(
+            submit_value.get("search_code", "")
+        ).strip()
+
+        if tool_name not in (
+            TOOL_PRODUCT_LOOKUP,
+            TOOL_SINGLE_PRODUCT_LOOKUP,
+        ):
+            await turn_context.send_activity(
+                "올바르지 않은 검색 도구입니다."
+            )
+            return
+
+        code_label = (
+            "상품코드"
+            if tool_name == TOOL_PRODUCT_LOOKUP
+            else "단품코드"
+        )
+
+        if not search_code:
+            await turn_context.send_activity(
+                f"{code_label}를 입력해주세요."
+            )
+            return
+
+        if len(search_code) > 100:
+            await turn_context.send_activity(
+                f"{code_label}는 100자 이하로 입력해주세요."
+            )
+            return
+
+        self.clear_pending_search_tool(
+            turn_context
+        )
+
+        print(
+            "[PRODUCT SEARCH TOOL SHELL]"
+            f" tool={tool_name}"
+            " input_type=code"
+            f" input_value={search_code}",
+            flush=True,
+        )
+
+        result_attachment = (
+            create_product_search_shell_result_card(
+                tool_name=tool_name,
+                input_type=code_label,
+                input_value=search_code,
+            )
+        )
+
+        if isinstance(
+            turn_context.activity.value,
+            dict,
+        ):
+            await self.update_or_send_card(
+                turn_context,
+                result_attachment,
+            )
+        else:
+            await turn_context.send_activity(
+                MessageFactory.attachment(
+                    result_attachment
+                )
+            )
+
+    async def handle_product_search_image(
+        self,
+        turn_context: TurnContext,
+        tool_name: str,
+        attachments: list[Attachment],
+    ) -> None:
+        image_attachments = [
+            attachment
+            for attachment in attachments
+            if is_barcode_image_attachment(
+                attachment
+            )
+        ]
+
+        if not image_attachments:
+            await turn_context.send_activity(
+                "바코드 이미지를 찾지 못했습니다."
+            )
+            return
+
+        image_attachment = image_attachments[0]
+        image_name = str(
+            image_attachment.name
+            or "바코드 이미지"
+        ).strip()
+
+        self.clear_pending_search_tool(
+            turn_context
+        )
+
+        print(
+            "[PRODUCT SEARCH IMAGE SHELL]"
+            f" tool={tool_name}"
+            f" image_count={len(image_attachments)}"
+            f" image_name={image_name}",
+            flush=True,
+        )
+
+        await turn_context.send_activity(
+            MessageFactory.attachment(
+                create_product_search_shell_result_card(
+                    tool_name=tool_name,
+                    input_type="바코드 이미지",
+                    input_value=image_name,
+                )
+            )
         )
 
     async def handle_pos_master_create_submit(
@@ -1648,6 +2034,30 @@ class RelayBot(ActivityHandler):
     ) -> None:
         activity = turn_context.activity
         sender = activity.from_property
+        attachments = activity.attachments or []
+
+        pending_search_tool = (
+            self.get_pending_search_tool(
+                turn_context
+            )
+        )
+        barcode_image_exists = any(
+            is_barcode_image_attachment(
+                attachment
+            )
+            for attachment in attachments
+        )
+
+        if (
+            pending_search_tool
+            and barcode_image_exists
+        ):
+            await self.handle_product_search_image(
+                turn_context,
+                pending_search_tool,
+                attachments,
+            )
+            return
 
         # ===== TEAMS IMAGE FORWARD FINAL =====
         direct_image_exists = any(
@@ -1662,9 +2072,7 @@ class RelayBot(ActivityHandler):
                     attachment.content_url or ""
                 ).strip()
             )
-            for attachment in (
-                activity.attachments or []
-            )
+            for attachment in attachments
         )
 
         if direct_image_exists:
@@ -1995,6 +2403,13 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        if action == "product_search_code_submit":
+            await self.handle_product_search_code_submit(
+                turn_context,
+                submit_value,
+            )
+            return
+
         if action == "feedback":
             await self.handle_feedback(
                 turn_context,
@@ -2038,6 +2453,9 @@ class RelayBot(ActivityHandler):
             "업무도구",
             "메뉴",
         }:
+            self.clear_pending_search_tool(
+                turn_context
+            )
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_tool_menu_card()
@@ -2049,6 +2467,9 @@ class RelayBot(ActivityHandler):
             "pos마스터생성",
             "포스마스터생성",
         }:
+            self.clear_pending_search_tool(
+                turn_context
+            )
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_pos_master_form_card()
@@ -2060,6 +2481,9 @@ class RelayBot(ActivityHandler):
             "푸드키오스크",
             "푸드키오스크도구",
         }:
+            self.clear_pending_search_tool(
+                turn_context
+            )
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_food_kiosk_tool_menu_card()
@@ -2071,6 +2495,9 @@ class RelayBot(ActivityHandler):
             "상단품검색",
             "상품단품검색",
         }:
+            self.clear_pending_search_tool(
+                turn_context
+            )
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_product_search_tool_menu_card()
@@ -2082,10 +2509,23 @@ class RelayBot(ActivityHandler):
             "@등록",
             "등록",
         }:
+            self.clear_pending_search_tool(
+                turn_context
+            )
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_register_form_card()
                 )
+            )
+            return
+
+        if pending_search_tool and mention_removed:
+            await self.handle_product_search_code_submit(
+                turn_context,
+                {
+                    "tool": pending_search_tool,
+                    "search_code": mention_removed,
+                },
             )
             return
 
