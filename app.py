@@ -36,6 +36,8 @@ KST = timezone(timedelta(hours=9))
 
 TOOL_POS_MASTER_CREATE = "pos_master_create"
 TOOL_PRODUCT_SEARCH = "product_search"
+TOOL_PRODUCT_LOOKUP = "product_lookup"
+TOOL_SINGLE_PRODUCT_LOOKUP = "single_product_lookup"
 TOOL_PATTERN_UPDATE = "pattern_update"
 TOOL_GENERAL_CHAT = "general_chat"
 TOOL_FOOD_KIOSK = "food_kiosk"
@@ -45,6 +47,8 @@ TOOL_FOOD_KIOSK_MENU_CREATE = "food_kiosk_menu_create"
 TOOL_TITLES = {
     TOOL_POS_MASTER_CREATE: "POS 마스터 생성",
     TOOL_PRODUCT_SEARCH: "상·단품 검색",
+    TOOL_PRODUCT_LOOKUP: "상품검색",
+    TOOL_SINGLE_PRODUCT_LOOKUP: "단품검색",
     TOOL_PATTERN_UPDATE: "패턴 수정",
     TOOL_GENERAL_CHAT: "일반 질문",
     TOOL_FOOD_KIOSK: "푸드키오스크",
@@ -244,6 +248,113 @@ def create_food_kiosk_tool_menu_card() -> Attachment:
                 "data": {
                     "action": "tool_select",
                     "tool": TOOL_FOOD_KIOSK_MENU_CREATE,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "전체 도구",
+                "data": {
+                    "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_product_search_tool_menu_card() -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "상·단품 검색",
+                "weight": "Bolder",
+                "size": "Medium",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": "검색할 대상을 선택해주세요.",
+                "isSubtle": True,
+                "wrap": True,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "상품검색",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_PRODUCT_LOOKUP,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "단품검색",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_SINGLE_PRODUCT_LOOKUP,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "전체 도구",
+                "data": {
+                    "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_product_search_status_card(
+    tool_name: str,
+) -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": TOOL_TITLES[tool_name],
+                "weight": "Bolder",
+                "size": "Medium",
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {
+                        "title": "실행 도구",
+                        "value": tool_name,
+                    },
+                    {
+                        "title": "상태",
+                        "value": "API 연동 대기",
+                    },
+                ],
+            },
+            {
+                "type": "TextBlock",
+                "text": "검색 도구 선택 라우팅만 준비되어 있습니다.",
+                "isSubtle": True,
+                "wrap": True,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "상·단품 검색 메뉴",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_PRODUCT_SEARCH,
                 },
             },
             {
@@ -957,6 +1068,15 @@ class RelayBot(ActivityHandler):
 
         if tool_name == TOOL_POS_MASTER_CREATE:
             attachment = create_pos_master_form_card()
+        elif tool_name == TOOL_PRODUCT_SEARCH:
+            attachment = create_product_search_tool_menu_card()
+        elif tool_name in (
+            TOOL_PRODUCT_LOOKUP,
+            TOOL_SINGLE_PRODUCT_LOOKUP,
+        ):
+            attachment = create_product_search_status_card(
+                tool_name
+            )
         elif tool_name == TOOL_FOOD_KIOSK:
             attachment = create_food_kiosk_tool_menu_card()
         elif tool_name in (
@@ -971,10 +1091,7 @@ class RelayBot(ActivityHandler):
                 "일반 질문",
                 "채팅창에 질문을 입력하면 기존 LLM으로 전달합니다.",
             )
-        elif tool_name in (
-            TOOL_PRODUCT_SEARCH,
-            TOOL_PATTERN_UPDATE,
-        ):
+        elif tool_name == TOOL_PATTERN_UPDATE:
             attachment = create_tool_status_card(
                 TOOL_TITLES[tool_name],
                 "도구 선택 라우팅만 준비되어 있습니다.",
@@ -1946,6 +2063,17 @@ class RelayBot(ActivityHandler):
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_food_kiosk_tool_menu_card()
+                )
+            )
+            return
+
+        if compact_command in {
+            "상단품검색",
+            "상품단품검색",
+        }:
+            await turn_context.send_activity(
+                MessageFactory.attachment(
+                    create_product_search_tool_menu_card()
                 )
             )
             return
