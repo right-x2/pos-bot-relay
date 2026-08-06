@@ -41,8 +41,6 @@ TOOL_SINGLE_PRODUCT_LOOKUP = "single_product_lookup"
 TOOL_PATTERN_UPDATE = "pattern_update"
 TOOL_GENERAL_CHAT = "general_chat"
 TOOL_FOOD_KIOSK = "food_kiosk"
-TOOL_FOOD_KIOSK_STORE_CREATE = "food_kiosk_store_create"
-TOOL_FOOD_KIOSK_MENU_CREATE = "food_kiosk_menu_create"
 TOOL_FOOD_KIOSK_SOLD_OUT = "food_kiosk_sold_out"
 
 TOOL_TITLES = {
@@ -53,8 +51,6 @@ TOOL_TITLES = {
     TOOL_PATTERN_UPDATE: "패턴 수정",
     TOOL_GENERAL_CHAT: "일반 질문",
     TOOL_FOOD_KIOSK: "푸드키오스크",
-    TOOL_FOOD_KIOSK_STORE_CREATE: "푸드키오스크 매장추가",
-    TOOL_FOOD_KIOSK_MENU_CREATE: "푸드키오스크 메뉴추가",
     TOOL_FOOD_KIOSK_SOLD_OUT: "푸드키오스크 품절처리",
 }
 
@@ -309,22 +305,6 @@ def create_food_kiosk_tool_menu_card() -> Attachment:
             },
         ],
         "actions": [
-            {
-                "type": "Action.Submit",
-                "title": "매장추가",
-                "data": {
-                    "action": "tool_select",
-                    "tool": TOOL_FOOD_KIOSK_STORE_CREATE,
-                },
-            },
-            {
-                "type": "Action.Submit",
-                "title": "메뉴추가",
-                "data": {
-                    "action": "tool_select",
-                    "tool": TOOL_FOOD_KIOSK_MENU_CREATE,
-                },
-            },
             {
                 "type": "Action.Submit",
                 "title": "품절처리",
@@ -1344,11 +1324,7 @@ class RelayBot(ActivityHandler):
                 turn_context
             )
             attachment = create_food_kiosk_tool_menu_card()
-        elif tool_name in (
-            TOOL_FOOD_KIOSK_STORE_CREATE,
-            TOOL_FOOD_KIOSK_MENU_CREATE,
-            TOOL_FOOD_KIOSK_SOLD_OUT,
-        ):
+        elif tool_name == TOOL_FOOD_KIOSK_SOLD_OUT:
             self.clear_pending_search_tool(
                 turn_context
             )
