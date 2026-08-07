@@ -857,10 +857,26 @@ def create_pattern_search_result_card(
         response_json.get("totalPages", 0),
         0,
     )
+    has_previous_value = response_json.get(
+        "hasPrevious"
+    )
+    has_next_value = response_json.get(
+        "hasNext"
+    )
     page = max(page, 1)
     page_size = max(page_size, 1)
     total_count = max(total_count, 0)
     total_pages = max(total_pages, 0)
+    has_previous = (
+        has_previous_value
+        if isinstance(has_previous_value, bool)
+        else page > 1
+    )
+    has_next = (
+        has_next_value
+        if isinstance(has_next_value, bool)
+        else page < total_pages
+    )
     patterns = response_json.get("patterns")
 
     if not isinstance(patterns, list):
@@ -959,7 +975,7 @@ def create_pattern_search_result_card(
 
     actions = []
 
-    if page > 1:
+    if has_previous:
         actions.append(
             {
                 "type": "Action.Submit",
@@ -975,7 +991,7 @@ def create_pattern_search_result_card(
             }
         )
 
-    if page < total_pages:
+    if has_next:
         actions.append(
             {
                 "type": "Action.Submit",
