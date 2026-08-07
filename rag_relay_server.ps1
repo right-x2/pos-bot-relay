@@ -6,6 +6,7 @@ $RegisterUrl = "http://10.103.201.164:8000/api/posts/request"
 $ImageChatUrl = "http://10.103.201.164:8000/api/rag/image-chat"
 $FeedbackUrl = "http://10.103.201.164:8000/api/logs/help-yn"
 $ItemSearchUrl = "http://10.103.201.164:8000/api/items/search"
+$PosMasterUrl = "http://10.103.201.164:8000/tools/create_pos_master"
 $PatternSearchUrl = "http://10.103.201.164:8000/tools/pattern_lookup"
 $PatternUpdateUrl = "http://10.103.201.164:8000/tools/pattern_update"
 
@@ -107,6 +108,7 @@ try {
     Write-Host "Image    : $ImageChatUrl"
     Write-Host "Feedback : $FeedbackUrl"
     Write-Host "Item     : $ItemSearchUrl"
+    Write-Host "PosMaster: $PosMasterUrl"
     Write-Host "Pattern  : $PatternSearchUrl"
     Write-Host "PtnUpdate: $PatternUpdateUrl"
     Write-Host "Stop     : Ctrl+C"
@@ -138,6 +140,7 @@ try {
                     imageUrl = $ImageChatUrl
                     feedbackUrl = $FeedbackUrl
                     itemSearchUrl = $ItemSearchUrl
+                    posMasterUrl = $PosMasterUrl
                     patternSearchUrl = $PatternSearchUrl
                     patternUpdateUrl = $PatternUpdateUrl
                     serverTime = $Now
@@ -255,6 +258,62 @@ try {
                     keywords = [string]$Incoming.keywords
                     requestTime = [string]$Incoming.requestTime
                 } | ConvertTo-Json -Depth 20 -Compress
+            }
+            elseif ($Path -eq "/tools/create_pos_master") {
+                $TargetUrl = $PosMasterUrl
+
+                $PosNo = ([string]$Incoming.posNo).Trim()
+                $RequestedBy = ([string]$Incoming.requestedBy).Trim()
+
+                if ([string]::IsNullOrWhiteSpace($PosNo)) {
+                    throw "Missing posNo"
+                }
+
+                if ($PosNo.Length -gt 1000) {
+                    throw "posNo must be 1000 characters or less"
+                }
+
+                if ($PosNo.Contains(",")) {
+                    if ($PosNo.Contains("~") -or $PosNo.Contains("-")) {
+                        throw "posNo list and range formats cannot be mixed"
+                    }
+
+                    foreach ($PosNumber in $PosNo.Split(",")) {
+                        if ($PosNumber.Trim() -notmatch "^\d+$") {
+                            throw "Invalid posNo list format"
+                        }
+                    }
+                }
+                elseif ($PosNo -match "^(\d+)\s*[~-]\s*(\d+)$") {
+                    $RangeStart = 0L
+                    $RangeEnd = 0L
+
+                    if (-not [long]::TryParse($Matches[1], [ref]$RangeStart)) {
+                        throw "Invalid range start"
+                    }
+
+                    if (-not [long]::TryParse($Matches[2], [ref]$RangeEnd)) {
+                        throw "Invalid range end"
+                    }
+
+                    if ($RangeStart -gt $RangeEnd) {
+                        throw "posNo range must be ascending"
+                    }
+                }
+                elseif ($PosNo -notmatch "^\d+$") {
+                    throw "Invalid posNo format"
+                }
+
+                $PosMasterPayload = [ordered]@{
+                    posNo = $PosNo
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($RequestedBy)) {
+                    $PosMasterPayload["requestedBy"] = $RequestedBy
+                }
+
+                $ForwardBody = $PosMasterPayload |
+                    ConvertTo-Json -Depth 20 -Compress
             }
             elseif ($Path -eq "/tools/pattern_lookup") {
                 $TargetUrl = $PatternSearchUrl

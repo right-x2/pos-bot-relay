@@ -16,6 +16,10 @@ from image_forwarder import (
 from item_search import search_items
 from pattern_search import search_patterns
 from pattern_update import update_pattern
+from pos_master import (
+    create_pos_master,
+    normalize_pos_no_input,
+)
 from aiohttp import web
 
 from botbuilder.core import ActivityHandler, MessageFactory, TurnContext
@@ -118,6 +122,11 @@ class Config:
     ITEM_SEARCH_API_URL = os.getenv(
         "ITEM_SEARCH_API_URL",
         "http://123.111.174.78:30002/api/items/search",
+    )
+
+    POS_MASTER_API_URL = os.getenv(
+        "POS_MASTER_API_URL",
+        "http://123.111.174.78:30002/tools/create_pos_master",
     )
 
     PATTERN_SEARCH_API_URL = os.getenv(
@@ -699,8 +708,8 @@ def create_pos_master_form_card() -> Attachment:
             {
                 "type": "TextBlock",
                 "text": (
-                    "생성할 POS 번호를 입력해주세요. "
-                    "현재는 도구 연동을 위한 화면만 동작합니다."
+                    "단건, 쉼표 목록 또는 정방향 범위로 입력해주세요. "
+                    "범위는 ~ 또는 -를 사용할 수 있습니다."
                 ),
                 "isSubtle": True,
                 "wrap": True,
@@ -709,10 +718,10 @@ def create_pos_master_form_card() -> Attachment:
                 "type": "Input.Text",
                 "id": "pos_no",
                 "label": "POS 번호",
-                "placeholder": "예: 1111",
+                "placeholder": "예: 1111 / 1111,1112 / 1111~1200",
                 "isRequired": True,
                 "errorMessage": "POS 번호를 입력해주세요.",
-                "maxLength": 30,
+                "maxLength": 1000,
             },
         ],
         "actions": [
@@ -1310,9 +1319,45 @@ def create_tool_status_card(
     return adaptive_attachment(card)
 
 
-def create_pos_master_shell_result_card(
-    pos_no: str,
+def create_pos_master_result_card(
+    *,
+    normalized_pos_no: str,
+    response_json: dict,
 ) -> Attachment:
+    result_pos_no = str(
+        response_json.get("posNo")
+        or normalized_pos_no
+    )
+    store_code = str(
+        response_json.get("storeCd")
+        or "-"
+    )
+    pos_kind = str(
+        response_json.get("posKnd")
+        or "-"
+    )
+    target_type = str(
+        response_json.get("targetType")
+        or "-"
+    )
+    target_type_label = {
+        "single": "단건",
+        "list": "목록",
+        "range": "범위",
+        "pos_knd": "POS 구분",
+    }.get(target_type, target_type)
+    try:
+        updated = int(
+            response_json.get("updated", 0)
+            or 0
+        )
+    except (TypeError, ValueError):
+        updated = 0
+    message = str(
+        response_json.get("message")
+        or "POS 마스터 생성이 완료되었습니다."
+    )
+
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -1320,7 +1365,7 @@ def create_pos_master_shell_result_card(
         "body": [
             {
                 "type": "TextBlock",
-                "text": "POS 마스터 생성 도구 준비 완료",
+                "text": "POS 마스터 생성 완료",
                 "weight": "Bolder",
                 "size": "Medium",
                 "color": "Good",
@@ -1330,25 +1375,30 @@ def create_pos_master_shell_result_card(
                 "type": "FactSet",
                 "facts": [
                     {
-                        "title": "실행 도구",
-                        "value": TOOL_POS_MASTER_CREATE,
+                        "title": "점포 코드",
+                        "value": store_code,
                     },
                     {
                         "title": "POS 번호",
-                        "value": pos_no,
+                        "value": result_pos_no,
                     },
                     {
-                        "title": "상태",
-                        "value": "API 연동 대기",
+                        "title": "POS 구분",
+                        "value": pos_kind,
+                    },
+                    {
+                        "title": "대상 유형",
+                        "value": target_type_label,
+                    },
+                    {
+                        "title": "반영 건수",
+                        "value": f"{updated}건",
                     },
                 ],
             },
             {
                 "type": "TextBlock",
-                "text": (
-                    "화면과 Action.Submit 라우팅만 연결된 상태입니다. "
-                    "실제 POS 마스터 데이터는 생성하지 않았습니다."
-                ),
+                "text": message[:1000],
                 "isSubtle": True,
                 "wrap": True,
                 "spacing": "Medium",
@@ -1357,7 +1407,15 @@ def create_pos_master_shell_result_card(
         "actions": [
             {
                 "type": "Action.Submit",
-                "title": "다른 도구 선택",
+                "title": "다시 생성",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_POS_MASTER_CREATE,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "도구 메뉴",
                 "data": {
                     "action": "tool_menu",
                 },
@@ -2246,32 +2304,123 @@ class RelayBot(ActivityHandler):
             submit_value.get("pos_no", "")
         ).strip()
 
-        if not pos_no:
-            await turn_context.send_activity(
-                "POS 번호를 입력해주세요."
+        try:
+            normalized_pos_no = (
+                normalize_pos_no_input(pos_no)
             )
-            return
-
-        if len(pos_no) > 30:
+        except ValueError as error:
             await turn_context.send_activity(
-                "POS 번호는 30자 이하로 입력해주세요."
+                str(error)
             )
             return
 
         sender = turn_context.activity.from_property
 
         print(
-            "[POS MASTER TOOL SHELL]"
+            "[POS MASTER API REQUEST]"
             f" tool={TOOL_POS_MASTER_CREATE}"
-            f" pos_no={pos_no}"
+            f" pos_no={normalized_pos_no}"
             f" user_id={sender.id if sender else ''}",
             flush=True,
         )
 
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(
+            keep_typing(
+                turn_context,
+                typing_stop_event,
+            )
+        )
+
+        try:
+            api_result = await create_pos_master(
+                target_url=CONFIG.POS_MASTER_API_URL,
+                pos_no=normalized_pos_no,
+            )
+
+        except Exception as error:
+            print(
+                "[POS MASTER API ERROR]"
+                f" type={type(error).__name__}"
+                f" message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
+
+            await turn_context.send_activity(
+                "POS 마스터 생성 중 오류가 발생했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+            return
+
+        finally:
+            typing_stop_event.set()
+            try:
+                await typing_task
+            except Exception as typing_error:
+                print(
+                    "[POS MASTER TYPING TASK ERROR]"
+                    f" type={type(typing_error).__name__}"
+                    f" message={typing_error}",
+                    flush=True,
+                )
+
+        status_code = int(
+            api_result.get("status", 0)
+            or 0
+        )
+        response_text = str(
+            api_result.get("response_text", "")
+        )
+        response_json = api_result.get(
+            "response_json"
+        )
+
+        if not isinstance(response_json, dict):
+            response_json = {}
+
+        try:
+            updated = int(
+                response_json.get("updated", 0)
+                or 0
+            )
+        except (TypeError, ValueError):
+            updated = 0
+
+        print(
+            "[POS MASTER API RESPONSE]"
+            f" status={status_code}"
+            f" body={response_text[:1000]}",
+            flush=True,
+        )
+
+        if (
+            status_code < 200
+            or status_code >= 300
+            or response_json.get("ok") is not True
+            or updated < 1
+        ):
+            error_message = str(
+                response_json.get("message")
+                or response_json.get("detail")
+                or response_json.get("error")
+                or response_text
+                or "알 수 없는 오류"
+            )
+
+            await turn_context.send_activity(
+                "POS 마스터 생성 요청에 실패했습니다.\n\n"
+                f"HTTP 상태: {status_code}\n"
+                f"내용: {error_message}"
+            )
+            return
+
         await self.update_or_send_card(
             turn_context,
-            create_pos_master_shell_result_card(
-                pos_no
+            create_pos_master_result_card(
+                normalized_pos_no=normalized_pos_no,
+                response_json=response_json,
             ),
         )
 
