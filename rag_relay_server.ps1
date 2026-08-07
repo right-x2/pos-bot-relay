@@ -6,7 +6,7 @@ $RegisterUrl = "http://10.103.201.164:8000/api/posts/request"
 $ImageChatUrl = "http://10.103.201.164:8000/api/rag/image-chat"
 $FeedbackUrl = "http://10.103.201.164:8000/api/logs/help-yn"
 $ItemSearchUrl = "http://10.103.201.164:8000/api/items/search"
-$PatternSearchUrl = "http://10.103.201.164:8000/api/patterns/search"
+$PatternSearchUrl = "http://10.103.201.164:8000/tools/pattern_lookup"
 $PatternUpdateUrl = "http://10.103.201.164:8000/tools/pattern_update"
 
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -256,7 +256,7 @@ try {
                     requestTime = [string]$Incoming.requestTime
                 } | ConvertTo-Json -Depth 20 -Compress
             }
-            elseif ($Path -eq "/api/patterns/search") {
+            elseif ($Path -eq "/tools/pattern_lookup") {
                 $TargetUrl = $PatternSearchUrl
 
                 $PosNo = [string]$Incoming.posNo

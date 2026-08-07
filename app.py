@@ -122,7 +122,7 @@ class Config:
 
     PATTERN_SEARCH_API_URL = os.getenv(
         "PATTERN_SEARCH_API_URL",
-        "http://123.111.174.78:30002/api/patterns/search",
+        "http://123.111.174.78:30002/tools/pattern_lookup",
     )
 
     PATTERN_UPDATE_API_URL = os.getenv(
