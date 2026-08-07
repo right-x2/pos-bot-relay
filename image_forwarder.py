@@ -1,6 +1,8 @@
+import html
 import json
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 import aiohttp
 
@@ -210,6 +212,194 @@ async def _download_teams_image(
                 )
 
 
+async def _download_direct_image(
+    content_url: str,
+) -> tuple[bytes, str]:
+    timeout = aiohttp.ClientTimeout(total=60)
+
+    async with aiohttp.ClientSession(
+        timeout=timeout
+    ) as session:
+        async with session.get(
+            content_url,
+            allow_redirects=True,
+        ) as response:
+            if response.status != 200:
+                response_text = await response.text()
+                raise RuntimeError(
+                    "Teams 이미지 파일 다운로드 실패: "
+                    f"HTTP {response.status}, "
+                    f"body={response_text[:300]}"
+                )
+
+            content_length = response.content_length
+
+            if (
+                content_length is not None
+                and content_length > MAX_IMAGE_SIZE
+            ):
+                raise ValueError(
+                    "이미지 크기가 10MB를 초과합니다."
+                )
+
+            image_bytes = await response.read()
+            response_content_type = (
+                response.headers.get(
+                    "Content-Type",
+                    "",
+                )
+            )
+
+    return image_bytes, response_content_type
+
+
+async def download_teams_image_attachment(
+    attachment: Any,
+    *,
+    app_id: str,
+    app_password: str,
+    tenant_id: str,
+) -> tuple[bytes, str, str]:
+    content_type = str(
+        getattr(
+            attachment,
+            "content_type",
+            "",
+        )
+        or ""
+    ).strip().lower()
+    content_url = str(
+        getattr(
+            attachment,
+            "content_url",
+            "",
+        )
+        or ""
+    ).strip()
+    content = getattr(
+        attachment,
+        "content",
+        None,
+    )
+    use_direct_download = False
+
+    if content_type.startswith("image/"):
+        if not content_url:
+            raise ValueError(
+                "이미지 contentUrl이 없습니다."
+            )
+    elif (
+        content_type
+        == "application/vnd.microsoft.teams.file.download.info"
+        and isinstance(content, dict)
+    ):
+        file_type = str(
+            content.get("fileType", "")
+        ).strip().lower().lstrip(".")
+
+        if file_type not in {
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "webp",
+            "bmp",
+        }:
+            raise ValueError(
+                "첨부 파일이 지원되는 이미지 형식이 아닙니다."
+            )
+
+        content_url = str(
+            content.get("downloadUrl", "")
+        ).strip()
+
+        if not content_url:
+            raise ValueError(
+                "이미지 파일 downloadUrl이 없습니다."
+            )
+
+        use_direct_download = True
+    elif content_type == "text/html":
+        content_text = (
+            " ".join(
+                str(value)
+                for value in content.values()
+            )
+            if isinstance(content, dict)
+            else str(content or "")
+        )
+        match = re.search(
+            r"<img\b[^>]*\bsrc=[\"']([^\"']+)[\"']",
+            content_text,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            content_url = html.unescape(
+                match.group(1)
+            ).strip()
+
+        if not content_url:
+            raise ValueError(
+                "HTML 첨부에서 이미지 URL을 찾지 못했습니다."
+            )
+    else:
+        raise ValueError(
+            "지원되는 이미지 첨부가 아닙니다."
+        )
+
+    if use_direct_download:
+        image_bytes, response_content_type = (
+            await _download_direct_image(
+                content_url
+            )
+        )
+    else:
+        image_bytes, response_content_type = (
+            await _download_teams_image(
+                content_url=content_url,
+                app_id=app_id,
+                app_password=app_password,
+                tenant_id=tenant_id,
+            )
+        )
+
+    if not image_bytes:
+        raise ValueError(
+            "다운로드된 이미지가 비어 있습니다."
+        )
+
+    if len(image_bytes) > MAX_IMAGE_SIZE:
+        raise ValueError(
+            "이미지 크기가 10MB를 초과합니다."
+        )
+
+    mime_type, extension = _infer_image_info(
+        image_bytes,
+        response_content_type,
+    )
+    attachment_name = str(
+        getattr(
+            attachment,
+            "name",
+            "",
+        )
+        or ""
+    ).strip()
+    safe_name = (
+        attachment_name
+        .replace("\\", "/")
+        .rsplit("/", 1)[-1]
+    )
+    filename = (
+        safe_name
+        if safe_name
+        else f"barcode-image{extension}"
+    )
+
+    return image_bytes, mime_type, filename
+
+
 async def forward_teams_image(
     turn_context: TurnContext,
     *,
@@ -221,7 +411,7 @@ async def forward_teams_image(
     user_id: str,
     user_name: str,
     question: str,
-) -> dict[str, Any] | None:
+) -> Optional[dict[str, Any]]:
     """
     Teams 이미지와 질문을 내부 multipart API로 전송한다.
 

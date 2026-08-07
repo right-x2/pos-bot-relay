@@ -5,10 +5,15 @@ import sys
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import aiohttp
 
-from image_forwarder import forward_teams_image
+from image_forwarder import (
+    download_teams_image_attachment,
+    forward_teams_image,
+)
+from item_search import search_items
 from aiohttp import web
 
 from botbuilder.core import ActivityHandler, MessageFactory, TurnContext
@@ -54,6 +59,35 @@ TOOL_TITLES = {
     TOOL_FOOD_KIOSK_SOLD_OUT: "푸드키오스크 품절처리",
 }
 
+ITEM_RESULT_FIELDS = (
+    ("STORE_CD", "점포코드"),
+    ("ITEM_CD", "상품코드"),
+    ("ITEM_NM", "상품명"),
+    ("BILL_ITEM_NM", "영수증 상품명"),
+    ("SALE_KND", "판매구분"),
+    ("ITEM_GRP", "상품그룹"),
+    ("VEN_CD", "거래처코드"),
+    ("PC_CD", "PC코드"),
+    ("CORNER_CD", "코너코드"),
+    ("USE_YN", "사용여부"),
+)
+
+PLU_RESULT_FIELDS = (
+    ("STORE_CD", "점포코드"),
+    ("PLU_CD", "단품코드"),
+    ("SCAN_CD1", "스캔코드1"),
+    ("SCAN_CD2", "스캔코드2"),
+    ("PLU_NM", "단품명"),
+    ("BILL_PLU_NM", "영수증 단품명"),
+    ("ITEM_CD", "상품코드"),
+    ("ITEM_NM", "상품명"),
+    ("BRAND_CD", "브랜드코드"),
+    ("PC_CD", "PC코드"),
+    ("CORNER_CD", "코너코드"),
+    ("GNRL_PRC", "일반가격"),
+    ("USE_YN", "사용여부"),
+)
+
 
 class Config:
     PORT = int(os.getenv("PORT", "3978"))
@@ -75,6 +109,11 @@ class Config:
     FEEDBACK_API_URL = os.getenv(
        "FEEDBACK_API_URL",
        "http://123.111.174.78:30002/api/logs/help-yn",
+    )
+
+    ITEM_SEARCH_API_URL = os.getenv(
+        "ITEM_SEARCH_API_URL",
+        "http://123.111.174.78:30002/api/items/search",
     )
 
 CONFIG = Config()
@@ -196,10 +235,9 @@ def is_barcode_image_attachment(
 
     if content_type == "text/html":
         content_text = (
-            json.dumps(
-                content,
-                ensure_ascii=False,
-                default=str,
+            " ".join(
+                str(value)
+                for value in content.values()
             )
             if isinstance(content, dict)
             else str(content or "")
@@ -445,11 +483,76 @@ def create_product_search_input_card(
     return adaptive_attachment(card)
 
 
-def create_product_search_shell_result_card(
+def create_product_search_result_card(
     tool_name: str,
-    input_type: str,
-    input_value: str,
+    response_json: dict,
 ) -> Attachment:
+    found = bool(
+        response_json.get("found")
+    )
+    result = response_json.get("result")
+
+    if not isinstance(result, dict):
+        result = {}
+
+    field_definitions = (
+        ITEM_RESULT_FIELDS
+        if tool_name == TOOL_PRODUCT_LOOKUP
+        else PLU_RESULT_FIELDS
+    )
+
+    facts = [
+        {
+            "title": "조회 구분",
+            "value": str(
+                response_json.get("itemType", "-")
+                or "-"
+            ),
+        },
+        {
+            "title": "입력 코드",
+            "value": str(
+                response_json.get("inputCode", "-")
+                or "-"
+            ),
+        },
+        {
+            "title": "바코드",
+            "value": str(
+                response_json.get("barcodeText", "-")
+                or "-"
+            ),
+        },
+        {
+            "title": "조회 코드",
+            "value": str(
+                response_json.get("resolvedCode", "-")
+                or "-"
+            ),
+        },
+    ]
+
+    if found:
+        for field_name, field_title in field_definitions:
+            if (
+                field_name in result
+                and result[field_name] is not None
+            ):
+                facts.append(
+                    {
+                        "title": field_title,
+                        "value": str(
+                            result[field_name]
+                        )[:1000],
+                    }
+                )
+
+    result_text = (
+        "조회 결과를 찾았습니다."
+        if found
+        else "일치하는 조회 결과가 없습니다."
+    )
+
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -457,41 +560,24 @@ def create_product_search_shell_result_card(
         "body": [
             {
                 "type": "TextBlock",
-                "text": f"{TOOL_TITLES[tool_name]} 입력 확인",
+                "text": f"{TOOL_TITLES[tool_name]} 결과",
                 "weight": "Bolder",
                 "size": "Medium",
-                "color": "Good",
+                "color": (
+                    "Good"
+                    if found
+                    else "Warning"
+                ),
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": result_text,
                 "wrap": True,
             },
             {
                 "type": "FactSet",
-                "facts": [
-                    {
-                        "title": "실행 도구",
-                        "value": tool_name,
-                    },
-                    {
-                        "title": "입력 방식",
-                        "value": input_type,
-                    },
-                    {
-                        "title": "입력값",
-                        "value": input_value,
-                    },
-                    {
-                        "title": "상태",
-                        "value": "API 연동 대기",
-                    },
-                ],
-            },
-            {
-                "type": "TextBlock",
-                "text": (
-                    "입력과 도구 라우팅까지만 연결된 상태입니다. "
-                    "실제 검색 API는 호출하지 않았습니다."
-                ),
-                "isSubtle": True,
-                "wrap": True,
+                "facts": facts,
                 "spacing": "Medium",
             },
         ],
@@ -1403,40 +1489,15 @@ class RelayBot(ActivityHandler):
             )
             return
 
-        self.clear_pending_search_tool(
-            turn_context
+        await self.execute_product_search(
+            turn_context,
+            tool_name=tool_name,
+            search_code=search_code,
+            update_source=isinstance(
+                turn_context.activity.value,
+                dict,
+            ),
         )
-
-        print(
-            "[PRODUCT SEARCH TOOL SHELL]"
-            f" tool={tool_name}"
-            " input_type=code"
-            f" input_value={search_code}",
-            flush=True,
-        )
-
-        result_attachment = (
-            create_product_search_shell_result_card(
-                tool_name=tool_name,
-                input_type=code_label,
-                input_value=search_code,
-            )
-        )
-
-        if isinstance(
-            turn_context.activity.value,
-            dict,
-        ):
-            await self.update_or_send_card(
-                turn_context,
-                result_attachment,
-            )
-        else:
-            await turn_context.send_activity(
-                MessageFactory.attachment(
-                    result_attachment
-                )
-            )
 
     async def handle_product_search_image(
         self,
@@ -1458,33 +1519,163 @@ class RelayBot(ActivityHandler):
             )
             return
 
-        image_attachment = image_attachments[0]
-        image_name = str(
-            image_attachment.name
-            or "바코드 이미지"
-        ).strip()
+        await self.execute_product_search(
+            turn_context,
+            tool_name=tool_name,
+            image_attachment=image_attachments[0],
+            update_source=False,
+        )
+
+    async def execute_product_search(
+        self,
+        turn_context: TurnContext,
+        *,
+        tool_name: str,
+        search_code: str = "",
+        image_attachment: Optional[Attachment] = None,
+        update_source: bool = False,
+    ) -> None:
+        if tool_name not in (
+            TOOL_PRODUCT_LOOKUP,
+            TOOL_SINGLE_PRODUCT_LOOKUP,
+        ):
+            await turn_context.send_activity(
+                "올바르지 않은 검색 도구입니다."
+            )
+            return
+
+        item_type = (
+            "상품"
+            if tool_name == TOOL_PRODUCT_LOOKUP
+            else "단품"
+        )
+
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(
+            keep_typing(
+                turn_context,
+                typing_stop_event,
+            )
+        )
+
+        try:
+            image_bytes = None
+            image_content_type = "image/jpeg"
+            image_filename = "barcode-image.jpg"
+
+            if image_attachment is not None:
+                (
+                    image_bytes,
+                    image_content_type,
+                    image_filename,
+                ) = await download_teams_image_attachment(
+                    image_attachment,
+                    app_id=CONFIG.APP_ID,
+                    app_password=CONFIG.APP_PASSWORD,
+                    tenant_id=CONFIG.APP_TENANTID,
+                )
+
+            api_result = await search_items(
+                target_url=CONFIG.ITEM_SEARCH_API_URL,
+                item_type=item_type,
+                code=search_code,
+                image_bytes=image_bytes,
+                image_filename=image_filename,
+                image_content_type=image_content_type,
+            )
+
+        except Exception as error:
+            print(
+                "[ITEM SEARCH API ERROR]"
+                f" tool={tool_name}"
+                f" type={type(error).__name__}"
+                f" message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
+
+            await turn_context.send_activity(
+                "상·단품 검색 중 오류가 발생했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+            return
+
+        finally:
+            typing_stop_event.set()
+            try:
+                await typing_task
+            except Exception as typing_error:
+                print(
+                    "[ITEM SEARCH TYPING TASK ERROR]"
+                    f" type={type(typing_error).__name__}"
+                    f" message={typing_error}",
+                    flush=True,
+                )
+
+        status_code = int(
+            api_result.get("status", 0)
+            or 0
+        )
+        response_text = str(
+            api_result.get("response_text", "")
+        )
+        response_json = api_result.get(
+            "response_json"
+        )
+
+        if not isinstance(response_json, dict):
+            response_json = {}
+
+        print(
+            "[ITEM SEARCH API RESPONSE]"
+            f" tool={tool_name}"
+            f" status={status_code}"
+            f" body={response_text[:1000]}",
+            flush=True,
+        )
+
+        if (
+            status_code != 200
+            or response_json.get("ok") is not True
+        ):
+            error_message = str(
+                response_json.get("message")
+                or response_json.get("detail")
+                or response_json.get("error")
+                or response_text
+                or "알 수 없는 오류"
+            )
+
+            await turn_context.send_activity(
+                "상·단품 검색 요청에 실패했습니다.\n\n"
+                f"HTTP 상태: {status_code}\n"
+                f"내용: {error_message}"
+            )
+            return
 
         self.clear_pending_search_tool(
             turn_context
         )
 
-        print(
-            "[PRODUCT SEARCH IMAGE SHELL]"
-            f" tool={tool_name}"
-            f" image_count={len(image_attachments)}"
-            f" image_name={image_name}",
-            flush=True,
-        )
-
-        await turn_context.send_activity(
-            MessageFactory.attachment(
-                create_product_search_shell_result_card(
-                    tool_name=tool_name,
-                    input_type="바코드 이미지",
-                    input_value=image_name,
-                )
+        result_attachment = (
+            create_product_search_result_card(
+                tool_name=tool_name,
+                response_json=response_json,
             )
         )
+
+        if update_source:
+            await self.update_or_send_card(
+                turn_context,
+                result_attachment,
+            )
+        else:
+            await turn_context.send_activity(
+                MessageFactory.attachment(
+                    result_attachment
+                )
+            )
 
     async def handle_pos_master_create_submit(
         self,
