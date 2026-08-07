@@ -43,7 +43,7 @@ TOOL_POS_MASTER_CREATE = "pos_master_create"
 TOOL_PRODUCT_SEARCH = "product_search"
 TOOL_PRODUCT_LOOKUP = "product_lookup"
 TOOL_SINGLE_PRODUCT_LOOKUP = "single_product_lookup"
-TOOL_PATTERN_UPDATE = "pattern_update"
+TOOL_PATTERN_SEARCH = "pattern_search"
 TOOL_GENERAL_CHAT = "general_chat"
 TOOL_FOOD_KIOSK = "food_kiosk"
 TOOL_FOOD_KIOSK_SOLD_OUT = "food_kiosk_sold_out"
@@ -53,7 +53,7 @@ TOOL_TITLES = {
     TOOL_PRODUCT_SEARCH: "상·단품 검색",
     TOOL_PRODUCT_LOOKUP: "상품검색",
     TOOL_SINGLE_PRODUCT_LOOKUP: "단품검색",
-    TOOL_PATTERN_UPDATE: "패턴 수정",
+    TOOL_PATTERN_SEARCH: "패턴 조회",
     TOOL_GENERAL_CHAT: "일반 질문",
     TOOL_FOOD_KIOSK: "푸드키오스크",
     TOOL_FOOD_KIOSK_SOLD_OUT: "푸드키오스크 품절처리",
@@ -294,10 +294,10 @@ def create_tool_menu_card() -> Attachment:
             },
             {
                 "type": "Action.Submit",
-                "title": "패턴 수정",
+                "title": "패턴 조회",
                 "data": {
                     "action": "tool_select",
-                    "tool": TOOL_PATTERN_UPDATE,
+                    "tool": TOOL_PATTERN_SEARCH,
                 },
             },
             {
@@ -701,6 +701,137 @@ def create_pos_master_form_card() -> Attachment:
                 "data": {
                     "action": "pos_master_create_submit",
                     "tool": TOOL_POS_MASTER_CREATE,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "도구 메뉴",
+                "data": {
+                    "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_pattern_search_form_card() -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "패턴 조회",
+                "weight": "Bolder",
+                "size": "Medium",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": (
+                    "조회 조건은 모두 선택 입력입니다. "
+                    "둘 다 비우면 전체 조회 요청으로 처리합니다."
+                ),
+                "isSubtle": True,
+                "wrap": True,
+            },
+            {
+                "type": "Input.Text",
+                "id": "pos_no",
+                "label": "POS 번호 (선택)",
+                "placeholder": "예: 1111",
+                "maxLength": 30,
+            },
+            {
+                "type": "Input.Text",
+                "id": "pattern_query",
+                "label": "패턴명 또는 패턴 코드 (선택)",
+                "placeholder": "패턴명 또는 패턴 코드 입력",
+                "maxLength": 100,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "조회",
+                "style": "positive",
+                "data": {
+                    "action": "pattern_search_submit",
+                    "tool": TOOL_PATTERN_SEARCH,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "도구 메뉴",
+                "data": {
+                    "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_pattern_search_shell_result_card(
+    pos_no: str,
+    pattern_query: str,
+) -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "패턴 조회 요청 준비 완료",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Good",
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {
+                        "title": "실행 도구",
+                        "value": TOOL_PATTERN_SEARCH,
+                    },
+                    {
+                        "title": "POS 번호",
+                        "value": pos_no or "전체",
+                    },
+                    {
+                        "title": "패턴명/코드",
+                        "value": pattern_query or "전체",
+                    },
+                    {
+                        "title": "상태",
+                        "value": "API 연동 대기",
+                    },
+                ],
+            },
+            {
+                "type": "TextBlock",
+                "text": (
+                    "입력과 Action.Submit 라우팅만 연결했습니다. "
+                    "실제 패턴 조회 API는 아직 호출하지 않습니다."
+                ),
+                "isSubtle": True,
+                "wrap": True,
+                "spacing": "Medium",
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "다시 조회",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_PATTERN_SEARCH,
                 },
             },
             {
@@ -1425,14 +1556,11 @@ class RelayBot(ActivityHandler):
                 "일반 질문",
                 "채팅창에 질문을 입력하면 기존 LLM으로 전달합니다.",
             )
-        elif tool_name == TOOL_PATTERN_UPDATE:
+        elif tool_name == TOOL_PATTERN_SEARCH:
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_tool_status_card(
-                TOOL_TITLES[tool_name],
-                "도구 선택 라우팅만 준비되어 있습니다.",
-            )
+            attachment = create_pattern_search_form_card()
         else:
             await turn_context.send_activity(
                 "올바르지 않은 도구 선택입니다."
@@ -1712,6 +1840,49 @@ class RelayBot(ActivityHandler):
             turn_context,
             create_pos_master_shell_result_card(
                 pos_no
+            ),
+        )
+
+    async def handle_pattern_search_submit(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        pos_no = str(
+            submit_value.get("pos_no", "")
+        ).strip()
+        pattern_query = str(
+            submit_value.get("pattern_query", "")
+        ).strip()
+
+        if len(pos_no) > 30:
+            await turn_context.send_activity(
+                "POS 번호는 30자 이하로 입력해주세요."
+            )
+            return
+
+        if len(pattern_query) > 100:
+            await turn_context.send_activity(
+                "패턴명 또는 패턴 코드는 100자 이하로 입력해주세요."
+            )
+            return
+
+        sender = turn_context.activity.from_property
+
+        print(
+            "[PATTERN SEARCH TOOL SHELL]"
+            f" tool={TOOL_PATTERN_SEARCH}"
+            f" pos_no={pos_no}"
+            f" pattern_query={pattern_query}"
+            f" user_id={sender.id if sender else ''}",
+            flush=True,
+        )
+
+        await self.update_or_send_card(
+            turn_context,
+            create_pattern_search_shell_result_card(
+                pos_no=pos_no,
+                pattern_query=pattern_query,
             ),
         )
 
@@ -2588,6 +2759,13 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        if action == "pattern_search_submit":
+            await self.handle_pattern_search_submit(
+                turn_context,
+                submit_value,
+            )
+            return
+
         if action == "feedback":
             await self.handle_feedback(
                 turn_context,
@@ -2679,6 +2857,20 @@ class RelayBot(ActivityHandler):
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_product_search_tool_menu_card()
+                )
+            )
+            return
+
+        if compact_command in {
+            "패턴조회",
+            "패턴검색",
+        }:
+            self.clear_pending_search_tool(
+                turn_context
+            )
+            await turn_context.send_activity(
+                MessageFactory.attachment(
+                    create_pattern_search_form_card()
                 )
             )
             return
