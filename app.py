@@ -15,6 +15,7 @@ from image_forwarder import (
 )
 from item_search import search_items
 from pattern_search import search_patterns
+from pattern_update import update_pattern
 from aiohttp import web
 
 from botbuilder.core import ActivityHandler, MessageFactory, TurnContext
@@ -45,6 +46,7 @@ TOOL_PRODUCT_SEARCH = "product_search"
 TOOL_PRODUCT_LOOKUP = "product_lookup"
 TOOL_SINGLE_PRODUCT_LOOKUP = "single_product_lookup"
 TOOL_PATTERN_SEARCH = "pattern_search"
+TOOL_PATTERN_UPDATE = "pattern_update"
 TOOL_GENERAL_CHAT = "general_chat"
 TOOL_FOOD_KIOSK = "food_kiosk"
 TOOL_FOOD_KIOSK_SOLD_OUT = "food_kiosk_sold_out"
@@ -55,6 +57,7 @@ TOOL_TITLES = {
     TOOL_PRODUCT_LOOKUP: "상품검색",
     TOOL_SINGLE_PRODUCT_LOOKUP: "단품검색",
     TOOL_PATTERN_SEARCH: "패턴 조회",
+    TOOL_PATTERN_UPDATE: "패턴 수정",
     TOOL_GENERAL_CHAT: "일반 질문",
     TOOL_FOOD_KIOSK: "푸드키오스크",
     TOOL_FOOD_KIOSK_SOLD_OUT: "푸드키오스크 품절처리",
@@ -120,6 +123,11 @@ class Config:
     PATTERN_SEARCH_API_URL = os.getenv(
         "PATTERN_SEARCH_API_URL",
         "http://123.111.174.78:30002/api/patterns/search",
+    )
+
+    PATTERN_UPDATE_API_URL = os.getenv(
+        "PATTERN_UPDATE_API_URL",
+        "http://123.111.174.78:30002/api/patterns/update",
     )
 
 CONFIG = Config()
@@ -304,6 +312,14 @@ def create_tool_menu_card() -> Attachment:
                 "data": {
                     "action": "tool_select",
                     "tool": TOOL_PATTERN_SEARCH,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "패턴 수정",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_PATTERN_UPDATE,
                 },
             },
             {
@@ -789,6 +805,148 @@ def create_pattern_search_form_card() -> Attachment:
                     "action": "pattern_search_submit",
                     "tool": TOOL_PATTERN_SEARCH,
                     "page": 1,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "도구 메뉴",
+                "data": {
+                    "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_pattern_update_form_card() -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "패턴 수정",
+                "weight": "Bolder",
+                "size": "Medium",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": "세 항목을 모두 입력하면 패턴 수정 API를 호출합니다.",
+                "isSubtle": True,
+                "wrap": True,
+            },
+            {
+                "type": "Input.Text",
+                "id": "pattern_group_code",
+                "label": "패턴 그룹 코드",
+                "placeholder": "예: 1001",
+                "isRequired": True,
+                "errorMessage": "패턴 그룹 코드를 입력해주세요.",
+                "maxLength": 100,
+            },
+            {
+                "type": "Input.Text",
+                "id": "pattern_code",
+                "label": "패턴 코드",
+                "placeholder": "예: 0001",
+                "isRequired": True,
+                "errorMessage": "패턴 코드를 입력해주세요.",
+                "maxLength": 100,
+            },
+            {
+                "type": "Input.Text",
+                "id": "pattern_value",
+                "label": "패턴값",
+                "placeholder": "수정할 패턴값 입력",
+                "isMultiline": True,
+                "isRequired": True,
+                "errorMessage": "패턴값을 입력해주세요.",
+                "maxLength": 4000,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "수정",
+                "style": "positive",
+                "data": {
+                    "action": "pattern_update_submit",
+                    "tool": TOOL_PATTERN_UPDATE,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "도구 메뉴",
+                "data": {
+                    "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_pattern_update_result_card(
+    *,
+    pattern_group_code: str,
+    pattern_code: str,
+    pattern_value: str,
+    response_json: dict,
+) -> Attachment:
+    message = str(
+        response_json.get("message")
+        or "패턴값이 수정되었습니다."
+    )
+
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "패턴 수정 완료",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Good",
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {
+                        "title": "패턴 그룹 코드",
+                        "value": pattern_group_code,
+                    },
+                    {
+                        "title": "패턴 코드",
+                        "value": pattern_code,
+                    },
+                    {
+                        "title": "패턴값",
+                        "value": pattern_value[:1000],
+                    },
+                ],
+            },
+            {
+                "type": "TextBlock",
+                "text": message[:1000],
+                "wrap": True,
+                "isSubtle": True,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "다시 수정",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_PATTERN_UPDATE,
                 },
             },
             {
@@ -1752,6 +1910,11 @@ class RelayBot(ActivityHandler):
                 turn_context
             )
             attachment = create_pattern_search_form_card()
+        elif tool_name == TOOL_PATTERN_UPDATE:
+            self.clear_pending_search_tool(
+                turn_context
+            )
+            attachment = create_pattern_update_form_card()
         else:
             await turn_context.send_activity(
                 "올바르지 않은 도구 선택입니다."
@@ -2189,6 +2352,171 @@ class RelayBot(ActivityHandler):
             turn_context,
             create_pattern_search_result_card(
                 response_json
+            ),
+        )
+
+    async def handle_pattern_update_submit(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        pattern_group_code = str(
+            submit_value.get(
+                "pattern_group_code",
+                "",
+            )
+        ).strip()
+        pattern_code = str(
+            submit_value.get(
+                "pattern_code",
+                "",
+            )
+        ).strip()
+        pattern_value = str(
+            submit_value.get(
+                "pattern_value",
+                "",
+            )
+        ).strip()
+
+        required_fields = (
+            (
+                pattern_group_code,
+                "패턴 그룹 코드를 입력해주세요.",
+            ),
+            (
+                pattern_code,
+                "패턴 코드를 입력해주세요.",
+            ),
+            (
+                pattern_value,
+                "패턴값을 입력해주세요.",
+            ),
+        )
+
+        for value, error_message in required_fields:
+            if not value:
+                await turn_context.send_activity(
+                    error_message
+                )
+                return
+
+        if (
+            len(pattern_group_code) > 100
+            or len(pattern_code) > 100
+            or len(pattern_value) > 4000
+        ):
+            await turn_context.send_activity(
+                "입력값의 허용 길이를 초과했습니다."
+            )
+            return
+
+        print(
+            "[PATTERN UPDATE API REQUEST]"
+            f" tool={TOOL_PATTERN_UPDATE}"
+            f" pattern_group_code={pattern_group_code}"
+            f" pattern_code={pattern_code}",
+            flush=True,
+        )
+
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(
+            keep_typing(
+                turn_context,
+                typing_stop_event,
+            )
+        )
+
+        try:
+            api_result = await update_pattern(
+                target_url=(
+                    CONFIG.PATTERN_UPDATE_API_URL
+                ),
+                pattern_group_code=(
+                    pattern_group_code
+                ),
+                pattern_code=pattern_code,
+                pattern_value=pattern_value,
+            )
+
+        except Exception as error:
+            print(
+                "[PATTERN UPDATE API ERROR]"
+                f" type={type(error).__name__}"
+                f" message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
+
+            await turn_context.send_activity(
+                "패턴 수정 중 오류가 발생했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+            return
+
+        finally:
+            typing_stop_event.set()
+            try:
+                await typing_task
+            except Exception as typing_error:
+                print(
+                    "[PATTERN UPDATE TYPING TASK ERROR]"
+                    f" type={type(typing_error).__name__}"
+                    f" message={typing_error}",
+                    flush=True,
+                )
+
+        status_code = int(
+            api_result.get("status", 0)
+            or 0
+        )
+        response_text = str(
+            api_result.get("response_text", "")
+        )
+        response_json = api_result.get(
+            "response_json"
+        )
+
+        if not isinstance(response_json, dict):
+            response_json = {}
+
+        print(
+            "[PATTERN UPDATE API RESPONSE]"
+            f" status={status_code}"
+            f" body={response_text[:1000]}",
+            flush=True,
+        )
+
+        if (
+            status_code < 200
+            or status_code >= 300
+            or response_json.get("ok") is False
+        ):
+            error_message = str(
+                response_json.get("message")
+                or response_json.get("detail")
+                or response_json.get("error")
+                or response_text
+                or "알 수 없는 오류"
+            )
+
+            await turn_context.send_activity(
+                "패턴 수정 요청에 실패했습니다.\n\n"
+                f"HTTP 상태: {status_code}\n"
+                f"내용: {error_message}"
+            )
+            return
+
+        await self.update_or_send_card(
+            turn_context,
+            create_pattern_update_result_card(
+                pattern_group_code=(
+                    pattern_group_code
+                ),
+                pattern_code=pattern_code,
+                pattern_value=pattern_value,
+                response_json=response_json,
             ),
         )
 
@@ -3075,6 +3403,13 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        if action == "pattern_update_submit":
+            await self.handle_pattern_update_submit(
+                turn_context,
+                submit_value,
+            )
+            return
+
         if action == "feedback":
             await self.handle_feedback(
                 turn_context,
@@ -3180,6 +3515,17 @@ class RelayBot(ActivityHandler):
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_pattern_search_form_card()
+                )
+            )
+            return
+
+        if compact_command == "패턴수정":
+            self.clear_pending_search_tool(
+                turn_context
+            )
+            await turn_context.send_activity(
+                MessageFactory.attachment(
+                    create_pattern_update_form_card()
                 )
             )
             return
