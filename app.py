@@ -1128,6 +1128,13 @@ def create_pattern_search_result_card(
                 pattern.get("patternValue", "")
                 or "-"
             )
+            pattern_description = str(
+                pattern.get("PTN_DTL_BIGO")
+                or pattern.get(
+                    "patternDescription"
+                )
+                or "-"
+            )
 
             body.append(
                 {
@@ -1145,10 +1152,48 @@ def create_pattern_search_result_card(
                             "wrap": True,
                         },
                         {
-                            "type": "TextBlock",
-                            "text": pattern_value[:4000],
-                            "wrap": True,
+                            "type": "ColumnSet",
                             "spacing": "Small",
+                            "columns": [
+                                {
+                                    "type": "Column",
+                                    "width": "1",
+                                    "items": [
+                                        {
+                                            "type": "TextBlock",
+                                            "text": "패턴값",
+                                            "weight": "Bolder",
+                                            "isSubtle": True,
+                                            "size": "Small",
+                                        },
+                                        {
+                                            "type": "TextBlock",
+                                            "text": pattern_value[:4000],
+                                            "wrap": True,
+                                            "spacing": "Small",
+                                        },
+                                    ],
+                                },
+                                {
+                                    "type": "Column",
+                                    "width": "2",
+                                    "items": [
+                                        {
+                                            "type": "TextBlock",
+                                            "text": "설명",
+                                            "weight": "Bolder",
+                                            "isSubtle": True,
+                                            "size": "Small",
+                                        },
+                                        {
+                                            "type": "TextBlock",
+                                            "text": pattern_description[:4000],
+                                            "wrap": True,
+                                            "spacing": "Small",
+                                        },
+                                    ],
+                                },
+                            ],
                         },
                     ],
                 }
