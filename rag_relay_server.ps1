@@ -268,8 +268,13 @@ try {
                     throw "Missing posNo"
                 }
 
-                if (($SearchType -ne "0") -and ($SearchType -ne "1")) {
-                    throw "searchType must be 0 or 1"
+                $ForwardSearchType = $null
+                if (-not [string]::IsNullOrWhiteSpace($SearchType)) {
+                    if (($SearchType -ne "0") -and ($SearchType -ne "1")) {
+                        throw "searchType must be null, 0 or 1"
+                    }
+
+                    $ForwardSearchType = $SearchType
                 }
 
                 $Page = 0
@@ -283,7 +288,7 @@ try {
 
                 $ForwardBody = [ordered]@{
                     posNo = $PosNo.Trim()
-                    searchType = $SearchType
+                    searchType = $ForwardSearchType
                     searchValue = $SearchValue.Trim()
                     page = $Page
                 } | ConvertTo-Json -Depth 20 -Compress

@@ -22,11 +22,12 @@ async def search_patterns(
         )
 
     if normalized_search_type not in (
+        "all",
         "0",
         "1",
     ):
         raise ValueError(
-            "searchType은 0 또는 1이어야 합니다."
+            "searchType은 all, 0 또는 1이어야 합니다."
         )
 
     if page < 1:
@@ -36,7 +37,11 @@ async def search_patterns(
 
     payload = {
         "posNo": normalized_pos_no,
-        "searchType": normalized_search_type,
+        "searchType": (
+            None
+            if normalized_search_type == "all"
+            else normalized_search_type
+        ),
         "searchValue": normalized_search_value,
         "page": page,
     }

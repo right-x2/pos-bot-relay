@@ -774,8 +774,12 @@ def create_pattern_search_form_card() -> Attachment:
                 "id": "search_type",
                 "label": "검색 구분",
                 "style": "compact",
-                "value": "0",
+                "value": "all",
                 "choices": [
+                    {
+                        "title": "전체",
+                        "value": "all",
+                    },
                     {
                         "title": "패턴 코드",
                         "value": "0",
@@ -1016,8 +1020,13 @@ def create_pattern_search_result_card(
         )
         or ""
     )
-    search_type = str(
-        response_json.get("searchType", "0")
+    response_search_type = response_json.get(
+        "searchType"
+    )
+    search_type = (
+        str(response_search_type)
+        if response_search_type in ("0", "1")
+        else "all"
     )
     search_value = str(
         response_json.get("searchValue", "")
@@ -2230,7 +2239,7 @@ class RelayBot(ActivityHandler):
             submit_value.get("pos_no", "")
         ).strip()
         search_type = str(
-            submit_value.get("search_type", "0")
+            submit_value.get("search_type", "all")
         ).strip()
         search_value = str(
             submit_value.get("search_value", "")
@@ -2257,6 +2266,7 @@ class RelayBot(ActivityHandler):
             return
 
         if search_type not in (
+            "all",
             "0",
             "1",
         ):
