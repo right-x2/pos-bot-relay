@@ -127,7 +127,7 @@ class Config:
 
     PATTERN_UPDATE_API_URL = os.getenv(
         "PATTERN_UPDATE_API_URL",
-        "http://123.111.174.78:30002/api/patterns/update",
+        "http://123.111.174.78:30002/tools/pattern_update",
     )
 
 CONFIG = Config()
@@ -898,6 +898,26 @@ def create_pattern_update_result_card(
     pattern_value: str,
     response_json: dict,
 ) -> Attachment:
+    result_group_code = str(
+        response_json.get("patternGroupCode")
+        or pattern_group_code
+    )
+    result_pattern_code = str(
+        response_json.get("patternCode")
+        or pattern_code
+    )
+    result_pattern_value = str(
+        response_json.get("patternValue")
+        or pattern_value
+    )
+    try:
+        updated = int(
+            response_json.get("updated", 0)
+            or 0
+        )
+    except (TypeError, ValueError):
+        updated = 0
+
     message = str(
         response_json.get("message")
         or "패턴값이 수정되었습니다."
@@ -921,15 +941,19 @@ def create_pattern_update_result_card(
                 "facts": [
                     {
                         "title": "패턴 그룹 코드",
-                        "value": pattern_group_code,
+                        "value": result_group_code,
                     },
                     {
                         "title": "패턴 코드",
-                        "value": pattern_code,
+                        "value": result_pattern_code,
                     },
                     {
                         "title": "패턴값",
-                        "value": pattern_value[:1000],
+                        "value": result_pattern_value[:1000],
+                    },
+                    {
+                        "title": "반영 건수",
+                        "value": f"{updated}건",
                     },
                 ],
             },
@@ -2488,10 +2512,19 @@ class RelayBot(ActivityHandler):
             flush=True,
         )
 
+        try:
+            updated = int(
+                response_json.get("updated", 0)
+                or 0
+            )
+        except (TypeError, ValueError):
+            updated = 0
+
         if (
             status_code < 200
             or status_code >= 300
-            or response_json.get("ok") is False
+            or response_json.get("ok") is not True
+            or updated < 1
         ):
             error_message = str(
                 response_json.get("message")
