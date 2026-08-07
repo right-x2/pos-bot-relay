@@ -14,6 +14,7 @@ from image_forwarder import (
     forward_teams_image,
 )
 from item_search import search_items
+from pattern_search import search_patterns
 from aiohttp import web
 
 from botbuilder.core import ActivityHandler, MessageFactory, TurnContext
@@ -114,6 +115,11 @@ class Config:
     ITEM_SEARCH_API_URL = os.getenv(
         "ITEM_SEARCH_API_URL",
         "http://123.111.174.78:30002/api/items/search",
+    )
+
+    PATTERN_SEARCH_API_URL = os.getenv(
+        "PATTERN_SEARCH_API_URL",
+        "http://123.111.174.78:30002/api/patterns/search",
     )
 
 CONFIG = Config()
@@ -732,8 +738,8 @@ def create_pattern_search_form_card() -> Attachment:
             {
                 "type": "TextBlock",
                 "text": (
-                    "조회 조건은 모두 선택 입력입니다. "
-                    "둘 다 비우면 전체 조회 요청으로 처리합니다."
+                    "POS 번호를 입력하고 검색 구분을 선택해주세요. "
+                    "검색어를 비우면 해당 POS의 전체 패턴을 조회합니다."
                 ),
                 "isSubtle": True,
                 "wrap": True,
@@ -741,15 +747,36 @@ def create_pattern_search_form_card() -> Attachment:
             {
                 "type": "Input.Text",
                 "id": "pos_no",
-                "label": "POS 번호 (선택)",
+                "label": "POS 번호",
                 "placeholder": "예: 1111",
+                "isRequired": True,
+                "errorMessage": "POS 번호를 입력해주세요.",
                 "maxLength": 30,
             },
             {
+                "type": "Input.ChoiceSet",
+                "id": "search_type",
+                "label": "검색 구분",
+                "style": "compact",
+                "value": "0",
+                "choices": [
+                    {
+                        "title": "패턴 코드",
+                        "value": "0",
+                    },
+                    {
+                        "title": "패턴명",
+                        "value": "1",
+                    },
+                ],
+                "isRequired": True,
+                "errorMessage": "검색 구분을 선택해주세요.",
+            },
+            {
                 "type": "Input.Text",
-                "id": "pattern_query",
-                "label": "패턴명 또는 패턴 코드 (선택)",
-                "placeholder": "패턴명 또는 패턴 코드 입력",
+                "id": "search_value",
+                "label": "검색어 (선택)",
+                "placeholder": "패턴 코드 또는 패턴명 입력",
                 "maxLength": 100,
             },
         ],
@@ -761,6 +788,7 @@ def create_pattern_search_form_card() -> Attachment:
                 "data": {
                     "action": "pattern_search_submit",
                     "tool": TOOL_PATTERN_SEARCH,
+                    "page": 1,
                 },
             },
             {
@@ -776,56 +804,195 @@ def create_pattern_search_form_card() -> Attachment:
     return adaptive_attachment(card)
 
 
-def create_pattern_search_shell_result_card(
-    pos_no: str,
-    pattern_query: str,
+def create_pattern_search_result_card(
+    response_json: dict,
 ) -> Attachment:
-    card = {
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-        "type": "AdaptiveCard",
-        "version": "1.3",
-        "body": [
+    def safe_int(
+        value,
+        default: int,
+    ) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    pos_no = str(
+        response_json.get("posNo", "")
+        or ""
+    )
+    pattern_group_code = str(
+        response_json.get(
+            "patternGroupCode",
+            "",
+        )
+        or ""
+    )
+    pattern_group_name = str(
+        response_json.get(
+            "patternGroupName",
+            "",
+        )
+        or ""
+    )
+    search_type = str(
+        response_json.get("searchType", "0")
+    )
+    search_value = str(
+        response_json.get("searchValue", "")
+        or ""
+    )
+    page = safe_int(
+        response_json.get("page", 1),
+        1,
+    )
+    page_size = safe_int(
+        response_json.get("pageSize", 10),
+        10,
+    )
+    total_count = safe_int(
+        response_json.get("totalCount", 0),
+        0,
+    )
+    total_pages = safe_int(
+        response_json.get("totalPages", 0),
+        0,
+    )
+    page = max(page, 1)
+    page_size = max(page_size, 1)
+    total_count = max(total_count, 0)
+    total_pages = max(total_pages, 0)
+    patterns = response_json.get("patterns")
+
+    if not isinstance(patterns, list):
+        patterns = []
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": "패턴 조회 결과",
+            "weight": "Bolder",
+            "size": "Medium",
+            "wrap": True,
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                {
+                    "title": "POS 번호",
+                    "value": pos_no or "-",
+                },
+                {
+                    "title": "패턴 그룹",
+                    "value": (
+                        f"{pattern_group_code} "
+                        f"{pattern_group_name}"
+                    ).strip() or "-",
+                },
+                {
+                    "title": "조회 결과",
+                    "value": f"총 {total_count}건",
+                },
+                {
+                    "title": "페이지",
+                    "value": (
+                        f"{page} / "
+                        f"{max(total_pages, 1)}"
+                        f" ({page_size}건 단위)"
+                    ),
+                },
+            ],
+        },
+    ]
+
+    if patterns:
+        for pattern in patterns[:page_size]:
+            if not isinstance(pattern, dict):
+                continue
+
+            pattern_code = str(
+                pattern.get("patternCode", "")
+                or "-"
+            )
+            pattern_name = str(
+                pattern.get("patternName", "")
+                or "-"
+            )
+            pattern_value = str(
+                pattern.get("patternValue", "")
+                or "-"
+            )
+
+            body.append(
+                {
+                    "type": "Container",
+                    "separator": True,
+                    "spacing": "Medium",
+                    "items": [
+                        {
+                            "type": "TextBlock",
+                            "text": (
+                                f"{pattern_code} · "
+                                f"{pattern_name}"
+                            ),
+                            "weight": "Bolder",
+                            "wrap": True,
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": pattern_value[:4000],
+                            "wrap": True,
+                            "spacing": "Small",
+                        },
+                    ],
+                }
+            )
+    else:
+        body.append(
             {
                 "type": "TextBlock",
-                "text": "패턴 조회 요청 준비 완료",
-                "weight": "Bolder",
-                "size": "Medium",
-                "color": "Good",
-                "wrap": True,
-            },
-            {
-                "type": "FactSet",
-                "facts": [
-                    {
-                        "title": "실행 도구",
-                        "value": TOOL_PATTERN_SEARCH,
-                    },
-                    {
-                        "title": "POS 번호",
-                        "value": pos_no or "전체",
-                    },
-                    {
-                        "title": "패턴명/코드",
-                        "value": pattern_query or "전체",
-                    },
-                    {
-                        "title": "상태",
-                        "value": "API 연동 대기",
-                    },
-                ],
-            },
-            {
-                "type": "TextBlock",
-                "text": (
-                    "입력과 Action.Submit 라우팅만 연결했습니다. "
-                    "실제 패턴 조회 API는 아직 호출하지 않습니다."
-                ),
-                "isSubtle": True,
+                "text": "조회된 패턴이 없습니다.",
+                "color": "Warning",
                 "wrap": True,
                 "spacing": "Medium",
-            },
-        ],
-        "actions": [
+            }
+        )
+
+    actions = []
+
+    if page > 1:
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "이전",
+                "data": {
+                    "action": "pattern_search_page",
+                    "tool": TOOL_PATTERN_SEARCH,
+                    "pos_no": pos_no,
+                    "search_type": search_type,
+                    "search_value": search_value,
+                    "page": page - 1,
+                },
+            }
+        )
+
+    if page < total_pages:
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "다음",
+                "data": {
+                    "action": "pattern_search_page",
+                    "tool": TOOL_PATTERN_SEARCH,
+                    "pos_no": pos_no,
+                    "search_type": search_type,
+                    "search_value": search_value,
+                    "page": page + 1,
+                },
+            }
+        )
+
+    actions.extend(
+        [
             {
                 "type": "Action.Submit",
                 "title": "다시 조회",
@@ -841,7 +1008,15 @@ def create_pattern_search_shell_result_card(
                     "action": "tool_menu",
                 },
             },
-        ],
+        ]
+    )
+
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": body,
+        "actions": actions,
     }
 
     return adaptive_attachment(card)
@@ -1851,9 +2026,26 @@ class RelayBot(ActivityHandler):
         pos_no = str(
             submit_value.get("pos_no", "")
         ).strip()
-        pattern_query = str(
-            submit_value.get("pattern_query", "")
+        search_type = str(
+            submit_value.get("search_type", "0")
         ).strip()
+        search_value = str(
+            submit_value.get("search_value", "")
+        ).strip()
+
+        try:
+            page = int(
+                submit_value.get("page", 1)
+                or 1
+            )
+        except (TypeError, ValueError):
+            page = 0
+
+        if not pos_no:
+            await turn_context.send_activity(
+                "POS 번호를 입력해주세요."
+            )
+            return
 
         if len(pos_no) > 30:
             await turn_context.send_activity(
@@ -1861,28 +2053,126 @@ class RelayBot(ActivityHandler):
             )
             return
 
-        if len(pattern_query) > 100:
+        if search_type not in (
+            "0",
+            "1",
+        ):
             await turn_context.send_activity(
-                "패턴명 또는 패턴 코드는 100자 이하로 입력해주세요."
+                "검색 구분을 올바르게 선택해주세요."
             )
             return
 
-        sender = turn_context.activity.from_property
+        if len(search_value) > 100:
+            await turn_context.send_activity(
+                "검색어는 100자 이하로 입력해주세요."
+            )
+            return
+
+        if page < 1:
+            await turn_context.send_activity(
+                "페이지 번호가 올바르지 않습니다."
+            )
+            return
 
         print(
-            "[PATTERN SEARCH TOOL SHELL]"
+            "[PATTERN SEARCH API REQUEST]"
             f" tool={TOOL_PATTERN_SEARCH}"
             f" pos_no={pos_no}"
-            f" pattern_query={pattern_query}"
-            f" user_id={sender.id if sender else ''}",
+            f" search_type={search_type}"
+            f" search_value={search_value}"
+            f" page={page}",
             flush=True,
         )
 
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(
+            keep_typing(
+                turn_context,
+                typing_stop_event,
+            )
+        )
+
+        try:
+            api_result = await search_patterns(
+                target_url=CONFIG.PATTERN_SEARCH_API_URL,
+                pos_no=pos_no,
+                search_type=search_type,
+                search_value=search_value,
+                page=page,
+            )
+
+        except Exception as error:
+            print(
+                "[PATTERN SEARCH API ERROR]"
+                f" type={type(error).__name__}"
+                f" message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
+
+            await turn_context.send_activity(
+                "패턴 조회 중 오류가 발생했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+            return
+
+        finally:
+            typing_stop_event.set()
+            try:
+                await typing_task
+            except Exception as typing_error:
+                print(
+                    "[PATTERN SEARCH TYPING TASK ERROR]"
+                    f" type={type(typing_error).__name__}"
+                    f" message={typing_error}",
+                    flush=True,
+                )
+
+        status_code = int(
+            api_result.get("status", 0)
+            or 0
+        )
+        response_text = str(
+            api_result.get("response_text", "")
+        )
+        response_json = api_result.get(
+            "response_json"
+        )
+
+        if not isinstance(response_json, dict):
+            response_json = {}
+
+        print(
+            "[PATTERN SEARCH API RESPONSE]"
+            f" status={status_code}"
+            f" body={response_text[:1000]}",
+            flush=True,
+        )
+
+        if (
+            status_code != 200
+            or response_json.get("ok") is not True
+        ):
+            error_message = str(
+                response_json.get("message")
+                or response_json.get("detail")
+                or response_json.get("error")
+                or response_text
+                or "알 수 없는 오류"
+            )
+
+            await turn_context.send_activity(
+                "패턴 조회 요청에 실패했습니다.\n\n"
+                f"HTTP 상태: {status_code}\n"
+                f"내용: {error_message}"
+            )
+            return
+
         await self.update_or_send_card(
             turn_context,
-            create_pattern_search_shell_result_card(
-                pos_no=pos_no,
-                pattern_query=pattern_query,
+            create_pattern_search_result_card(
+                response_json
             ),
         )
 
@@ -2759,7 +3049,10 @@ class RelayBot(ActivityHandler):
             )
             return
 
-        if action == "pattern_search_submit":
+        if action in (
+            "pattern_search_submit",
+            "pattern_search_page",
+        ):
             await self.handle_pattern_search_submit(
                 turn_context,
                 submit_value,
