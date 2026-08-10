@@ -9,8 +9,8 @@
 | --- | --- | --- |
 | POST | `/api/rag/chat` | 챗봇 메인 진입점. 일반 질문은 FAQ RAG로 처리하고, 일부 자연어 명령은 직접 실행 |
 | POST | `/api/posts/request` | 신규 FAQ 게시 요청 등록 |
-| POST | `/api/admin/posts/approve` | 승인 대기 FAQ 승인 후 벡터DB 반영 |
-| POST | `/api/admin/posts/approve-by-key` | `REG_DT + SEQ` 기준 FAQ 승인 후 벡터DB 반영 |
+| POST | `/api/admin/posts/approve` | 외부 승인 확인 후 벡터DB 및 Teams 알림 반영 |
+| POST | `/api/admin/posts/approve-by-key` | `REG_DT + SEQ` 기준 외부 승인 확인 후 벡터DB 및 Teams 알림 반영 |
 | POST | `/api/admin/posts/upsert-embedding-by-key` | `REG_DT + SEQ` 기준 FAQ 임베딩 upsert |
 | POST | `/api/admin/posts/delete-embedding-by-key` | `REG_DT + SEQ` 기준 FAQ 임베딩 삭제 |
 | GET | `/api/health` | 헬스체크 |
@@ -164,7 +164,8 @@
 
 ### 3.3 POST `/api/admin/posts/approve`
 
-승인 대기 FAQ를 승인하고 벡터DB에 즉시 반영한다.
+외부 시스템에서 승인된 FAQ(`USE_YN = '1'`)를 확인하고 벡터DB에 반영한 뒤,
+권한 그룹 `8001`의 모든 사용자에게 Teams 알림을 등록한다.
 
 요청 예시:
 
@@ -188,7 +189,7 @@
 {
   "success": true,
   "requestId": 123,
-  "message": "게시글이 승인되어 벡터에 반영되었습니다.",
+  "message": "게시글이 승인되어 벡터에 반영되었고 알림 3건이 등록되었습니다.",
   "errorCode": null
 }
 ```
@@ -197,15 +198,19 @@
 
 - `VALIDATION_ERROR`
 - `NOT_FOUND`
+- `FAQ_NOT_APPROVED`
 - `APPROVE_FAILED`
 
 주의:
 
 - 코드상 `requestId`는 별도 요청 테이블 ID가 아니라 FAQ의 `SEQ` 기준으로 승인 처리된다.
+- 이 API는 `USE_YN`을 변경하지 않는다. 외부 승인 처리가 완료되지 않았으면 `FAQ_NOT_APPROVED`(409)를 반환한다.
+- 승인 확인과 벡터 반영이 끝나면 권한 그룹 `8001` 사용자별로 `TASK_GBCD = '02'` 알림을 등록한다.
 
 ### 3.4 POST `/api/admin/posts/approve-by-key`
 
-`REG_DT + SEQ` 기준으로 FAQ를 승인하고 벡터DB에 즉시 반영한다.
+`REG_DT + SEQ` 기준으로 외부 승인 상태를 확인하고 벡터DB에 반영한 뒤,
+권한 그룹 `8001`의 모든 사용자에게 Teams 알림을 등록한다.
 
 요청 예시:
 
@@ -225,13 +230,15 @@
 | `seq` | int | Y | FAQ 순번. 0보다 커야 함 |
 | `adminUserName` | string | N | 승인자 이름. 없으면 `system` 사용 |
 
+`adminUserName`은 기존 호출 형식 호환을 위해 유지하며, 백엔드에서는 승인 상태를 변경하지 않는다.
+
 성공 응답 예시:
 
 ```json
 {
   "success": true,
   "requestId": 123,
-  "message": "게시글이 승인되어 벡터에 반영되었습니다.",
+  "message": "게시글이 승인되어 벡터에 반영되었고 알림 3건이 등록되었습니다.",
   "errorCode": null
 }
 ```
@@ -240,7 +247,14 @@
 
 - `VALIDATION_ERROR`
 - `NOT_FOUND`
+- `FAQ_NOT_APPROVED`
 - `APPROVE_FAILED`
+
+Teams 알림 메시지 형식:
+
+```text
+FAQ가 등록됐습니다. FAQ 제목 : {FAQ 제목} / 등록자 : {등록자 이름}
+```
 
 ### 3.5 POST `/api/admin/posts/upsert-embedding-by-key`
 

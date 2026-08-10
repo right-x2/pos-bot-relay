@@ -609,47 +609,6 @@ def insert_post_request(
     }
 
 
-def approve_post_request(request_id: int, admin_user_name: str):
-    update_sql = """
-    UPDATE HDHBO.dbo.POS_FAQ_MST
-    SET USE_YN = '1',
-        UPD_USER = ?,
-        UPD_DTM = ?
-    OUTPUT
-        INSERTED.REG_DT,
-        INSERTED.SEQ,
-        INSERTED.TITLE,
-        INSERTED.ANSWER,
-        INSERTED.CATEGORY,
-        INSERTED.KEYWORDS,
-        INSERTED.USE_YN,
-        INSERTED.FILLER2,
-        INSERTED.FILLER3
-    WHERE SEQ = ?
-    """
-    upd_dtm = datetime.now().strftime("%Y-%m-%d %H:%M:%S ")
-
-    with pyodbc.connect(get_conn_str()) as conn:
-        cur = conn.cursor()
-        row = cur.execute(update_sql, admin_user_name, upd_dtm, request_id).fetchone()
-        conn.commit()
-
-    if row is None:
-        return None
-
-    return {
-        "REG_DT": row.REG_DT,
-        "SEQ": row.SEQ,
-        "TITLE": row.TITLE,
-        "ANSWER": row.ANSWER,
-        "CATEGORY": row.CATEGORY,
-        "KEYWORDS": row.KEYWORDS,
-        "USE_YN": row.USE_YN,
-        "FILLER2": row.FILLER2,
-        "FILLER3": row.FILLER3,
-    }
-
-
 def get_post_request_by_key(reg_dt: str, seq: int):
     select_sql = """
     SELECT
@@ -661,7 +620,8 @@ def get_post_request_by_key(reg_dt: str, seq: int):
         KEYWORDS,
         USE_YN,
         FILLER2,
-        FILLER3
+        FILLER3,
+        REG_USER
     FROM HDHBO.dbo.POS_FAQ_MST
     WHERE REG_DT = ?
       AND SEQ = ?
@@ -683,8 +643,103 @@ def get_post_request_by_key(reg_dt: str, seq: int):
         "KEYWORDS": row.KEYWORDS,
         "USE_YN": row.USE_YN,
         "FILLER2": row.FILLER2,
-        "FILLER3": row.FILLER3
+        "FILLER3": row.FILLER3,
+        "REG_USER": row.REG_USER,
     }
+
+
+def get_post_request_by_seq(seq: int):
+    """Return the latest FAQ row for the legacy requestId(SEQ) API."""
+    select_sql = """
+    SELECT TOP 1
+        REG_DT,
+        SEQ,
+        TITLE,
+        ANSWER,
+        CATEGORY,
+        KEYWORDS,
+        USE_YN,
+        FILLER2,
+        FILLER3,
+        REG_USER
+    FROM HDHBO.dbo.POS_FAQ_MST
+    WHERE SEQ = ?
+    ORDER BY REG_DT DESC
+    """
+
+    with pyodbc.connect(get_conn_str()) as conn:
+        cur = conn.cursor()
+        row = cur.execute(select_sql, seq).fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "REG_DT": row.REG_DT,
+        "SEQ": int(row.SEQ),
+        "TITLE": row.TITLE,
+        "ANSWER": row.ANSWER,
+        "CATEGORY": row.CATEGORY,
+        "KEYWORDS": row.KEYWORDS,
+        "USE_YN": row.USE_YN,
+        "FILLER2": row.FILLER2,
+        "FILLER3": row.FILLER3,
+        "REG_USER": row.REG_USER,
+    }
+
+
+def insert_teams_faq_approval_notifications(
+    faq_title: str,
+    registrant_name: str,
+) -> int:
+    """Queue an FAQ approval notification for every auth group 8001 user."""
+    title = str(faq_title or "").strip() or "제목 없음"
+    registrant = str(registrant_name or "").strip() or "알 수 없음"
+    message = f"FAQ가 등록됐습니다. FAQ 제목 : {title} / 등록자 : {registrant}"
+    message = message[:2000]
+
+    insert_sql = """
+    SET NOCOUNT ON;
+
+    INSERT INTO HDMST.dbo.TEAMS_NOTF_SEND_DTL (
+        USER_ID,
+        MESSAGE,
+        SUCC_YN,
+        TRY_CNT,
+        RGST_ID,
+        RGST_IP,
+        REG_DTM,
+        CHGP_ID,
+        CHGP_IP,
+        CHG_DTM,
+        TASK_GBCD
+    )
+    SELECT DISTINCT
+        LTRIM(RTRIM(USER_ID)),
+        ?,
+        'N',
+        0,
+        'POS_FAQ_API',
+        NULL,
+        GETDATE(),
+        NULL,
+        NULL,
+        NULL,
+        '02'
+    FROM HDHBO.dbo.SYS_AUTH_GRP_USER
+    WHERE AUTH_GRP_CD = '8001'
+      AND NULLIF(LTRIM(RTRIM(USER_ID)), '') IS NOT NULL;
+
+    SELECT @@ROWCOUNT AS INSERTED_COUNT;
+    """
+
+    with pyodbc.connect(get_conn_str()) as conn:
+        cur = conn.cursor()
+        row = cur.execute(insert_sql, message).fetchone()
+        inserted_count = int(row[0]) if row else 0
+        conn.commit()
+
+    return inserted_count
 
 
 def insert_pos_faq_log(

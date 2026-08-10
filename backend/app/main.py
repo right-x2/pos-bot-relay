@@ -19,18 +19,18 @@ from pydantic import BaseModel, ConfigDict
 from app.azure_client import build_image_rag_query, extract_barcode_text, vision_answer
 from app.command_router import parse_command
 from app.db import (
-    approve_post_request,
     fetch_item_master_by_code,
     fetch_plu_master_by_code,
     get_post_request_by_key,
+    get_post_request_by_seq,
     fetch_pos_pattern_group_by_pos,
     fetch_pos_pattern_lookup_count_by_pos,
     fetch_pos_pattern_lookup_page_by_pos,
     fetch_pos_pattern_details_by_pos,
     fetch_pos_pattern_groups_by_pos,
-    is_user_in_auth_group,
     insert_pos_faq_log,
     insert_post_request,
+    insert_teams_faq_approval_notifications,
     update_pos_faq_log_help_yn,
     update_pos_pattern_value,
     update_pos_pattern_value_by_group_code,
@@ -244,6 +244,19 @@ def _success_response(request_id: int, message: str):
             "errorCode": None,
         },
         media_type="application/json; charset=utf-8",
+    )
+
+
+def _is_approved_faq(record: dict) -> bool:
+    return str(record.get("USE_YN") or "").strip() == "1"
+
+
+def _complete_faq_approval(record: dict) -> int:
+    """Reflect an externally approved FAQ in Chroma and queue Teams notices."""
+    upsert_faq_vector(record)
+    return insert_teams_faq_approval_notifications(
+        record.get("TITLE"),
+        record.get("REG_USER"),
     )
 
 
@@ -655,8 +668,6 @@ def register_post_request(req: PostRequest, request: Request):
             return _error_response("requestTime must include timezone offset", "INVALID_REQUEST_TIME", 400)
 
         teams_user_id = _empty_to_none(req.teamsUserId) or ""
-        auto_approve = is_user_in_auth_group(teams_user_id, "8000")
-        use_yn = "1" if auto_approve else "0"
 
         _log_api_step(request, "db_insert_start")
         print(req)
@@ -669,19 +680,11 @@ def register_post_request(req: PostRequest, request: Request):
             _empty_to_none(req.answer) or "",
             _empty_to_none(req.keywords),
             req.requestTime,
-            use_yn=use_yn,
+            use_yn="0",
         )
         record_id = insert_result["seq"]
 
         _log_api_step(request, "db_insert_done", record_id=record_id)
-        if auto_approve:
-            _log_api_step(request, "vector_upsert_start", record_id=record_id)
-            record = get_post_request_by_key(insert_result["reg_dt"], insert_result["seq"])
-            if record is not None:
-                upsert_faq_vector(record)
-            _log_api_step(request, "vector_upsert_done", record_id=record_id)
-            return _success_response(record_id, "게시글이 등록되어 즉시 벡터에 반영되었습니다.")
-
         return _success_response(record_id, "게시글이 승인대기 상태로 등록되었습니다.")
 
     except Exception:
@@ -692,7 +695,7 @@ def register_post_request(req: PostRequest, request: Request):
 @app.post(
     "/api/admin/posts/approve",
     summary="게시글 승인",
-    description="승인 대기 상태의 FAQ 게시글을 승인하고 USE_YN을 1로 변경한 뒤 벡터DB에 즉시 반영합니다."
+    description="외부에서 승인된 FAQ를 확인하고 벡터DB 반영 후 Teams 승인 알림을 등록합니다."
 )
 def approve_post(req: ApprovePostRequest, request: Request):
     try:
@@ -706,18 +709,35 @@ def approve_post(req: ApprovePostRequest, request: Request):
             _log_api_step(request, "validation_failed", field="adminUserName")
             return _error_response("adminUserName is empty", "VALIDATION_ERROR", 400)
 
-        _log_api_step(request, "db_approve_start", post_request_id=req.requestId)
-        record = get_post_request_by_key(req.requestId, _empty_to_none(req.adminUserName) or "")
+        _log_api_step(request, "db_lookup_start", post_request_id=req.requestId)
+        record = get_post_request_by_seq(req.requestId)
 
         if record is None:
             _log_api_step(request, "not_found", post_request_id=req.requestId)
             return _error_response("승인 대상 FAQ를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
-        _log_api_step(request, "vector_upsert_start", post_request_id=req.requestId)
-        upsert_faq_vector(record)
-        _log_api_step(request, "vector_upsert_done", post_request_id=req.requestId)
+        if not _is_approved_faq(record):
+            _log_api_step(request, "not_approved", post_request_id=req.requestId)
+            return _error_response(
+                "아직 승인되지 않은 FAQ입니다.",
+                "FAQ_NOT_APPROVED",
+                409,
+            )
 
-        return _success_response(req.requestId, "게시글이 승인되어 벡터에 반영되었습니다.")
+        _log_api_step(request, "vector_upsert_start", post_request_id=req.requestId)
+        notification_count = _complete_faq_approval(record)
+        _log_api_step(request, "vector_upsert_done", post_request_id=req.requestId)
+        _log_api_step(
+            request,
+            "teams_notification_queued",
+            post_request_id=req.requestId,
+            recipient_count=notification_count,
+        )
+
+        return _success_response(
+            req.requestId,
+            f"게시글이 승인되어 벡터에 반영되었고 알림 {notification_count}건이 등록되었습니다.",
+        )
 
     except Exception:
         traceback.print_exc()
@@ -727,7 +747,7 @@ def approve_post(req: ApprovePostRequest, request: Request):
 @app.post(
     "/api/admin/posts/approve-by-key",
     summary="게시글 승인(등록일/SEQ)",
-    description="FAQ 등록일자(REG_DT)와 SEQ로 승인 처리 후 벡터DB에 즉시 반영합니다."
+    description="REG_DT와 SEQ로 외부 승인 상태를 확인하고 벡터DB 반영 후 Teams 승인 알림을 등록합니다."
 )
 def approve_post_by_key(req: ApprovePostByKeyRequest, request: Request):
     try:
@@ -742,19 +762,36 @@ def approve_post_by_key(req: ApprovePostByKeyRequest, request: Request):
             _log_api_step(request, "validation_failed", field="seq")
             return _error_response("seq is invalid", "VALIDATION_ERROR", 400)
 
-        admin_user = _empty_to_none(req.adminUserName) or "system"
-        _log_api_step(request, "db_approve_start", reg_dt=reg_dt, seq=req.seq)
+        _log_api_step(request, "db_lookup_start", reg_dt=reg_dt, seq=req.seq)
         record = get_post_request_by_key(reg_dt, req.seq)
         print(record)
         if record is None:
             _log_api_step(request, "not_found", reg_dt=reg_dt, seq=req.seq)
             return _error_response("승인 대상 FAQ를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
-        _log_api_step(request, "vector_upsert_start", reg_dt=reg_dt, seq=req.seq)
-        upsert_faq_vector(record)
-        _log_api_step(request, "vector_upsert_done", reg_dt=reg_dt, seq=req.seq)
+        if not _is_approved_faq(record):
+            _log_api_step(request, "not_approved", reg_dt=reg_dt, seq=req.seq)
+            return _error_response(
+                "아직 승인되지 않은 FAQ입니다.",
+                "FAQ_NOT_APPROVED",
+                409,
+            )
 
-        return _success_response(req.seq, "게시글이 승인되어 벡터에 반영되었습니다.")
+        _log_api_step(request, "vector_upsert_start", reg_dt=reg_dt, seq=req.seq)
+        notification_count = _complete_faq_approval(record)
+        _log_api_step(request, "vector_upsert_done", reg_dt=reg_dt, seq=req.seq)
+        _log_api_step(
+            request,
+            "teams_notification_queued",
+            reg_dt=reg_dt,
+            seq=req.seq,
+            recipient_count=notification_count,
+        )
+
+        return _success_response(
+            req.seq,
+            f"게시글이 승인되어 벡터에 반영되었고 알림 {notification_count}건이 등록되었습니다.",
+        )
 
     except Exception:
         traceback.print_exc()
