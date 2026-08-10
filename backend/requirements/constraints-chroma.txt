@@ -1,0 +1,7 @@
+# Windows/Python 3.11에서 재임베딩까지 확인한 조합입니다.
+# 개별 패키지를 임의로 올리지 마세요.
+chromadb==0.5.23
+chroma-hnswlib==0.7.6
+monotonic==1.6
+numpy==1.26.4
+posthog==3.7.4
