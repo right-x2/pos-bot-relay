@@ -358,6 +358,11 @@ try {
                 $PatternGroupCode = [string]$Incoming.patternGroupCode
                 $PatternCode = [string]$Incoming.patternCode
                 $PatternValue = [string]$Incoming.patternValue
+                $UserId = [string]$Incoming.userId
+
+                if ([string]::IsNullOrWhiteSpace($UserId)) {
+                    throw "Missing userId"
+                }
 
                 if ([string]::IsNullOrWhiteSpace($PatternGroupCode)) {
                     throw "Missing patternGroupCode"
@@ -372,6 +377,7 @@ try {
                 }
 
                 $ForwardBody = [ordered]@{
+                    userId = $UserId.Trim()
                     patternGroupCode = $PatternGroupCode.Trim()
                     patternCode = $PatternCode.Trim()
                     patternValue = $PatternValue.Trim()

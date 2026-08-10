@@ -432,6 +432,7 @@ def update_pos_pattern_value(
     pattern_type: str,
     pattern_value: str,
     new_value: str,
+    store_cd: str,
 ) -> int:
     if pattern_type == "name":
         condition = "d.PTN_NM = ?"
@@ -443,14 +444,16 @@ def update_pos_pattern_value(
     SET d.PTN_VAL = ?
     FROM HDMST..POS_PTN_DTL d
     JOIN HDMST..POS_MST m
-      ON m.PTN_GRP_CD = d.PTN_GRP_CD
-    WHERE m.POS_NO = ?
+      ON m.STORE_CD = d.STORE_CD
+     AND m.PTN_GRP_CD = d.PTN_GRP_CD
+    WHERE m.STORE_CD = ?
+      AND m.POS_NO = ?
       AND {condition}
     """
 
     with pyodbc.connect(get_conn_str()) as conn:
         cur = conn.cursor()
-        cur.execute(sql, new_value, pos_no, pattern_value)
+        cur.execute(sql, new_value, store_cd, pos_no, pattern_value)
         rows = cur.rowcount
         conn.commit()
 
@@ -461,22 +464,45 @@ def update_pos_pattern_value_by_group_code(
     pattern_group_code: str,
     pattern_code: str,
     pattern_value: str,
+    store_cd: str,
 ) -> int:
     sql = """
     UPDATE d
     SET d.PTN_VAL = ?
     FROM HDMST..POS_PTN_DTL d
-    WHERE d.PTN_GRP_CD = ?
+    WHERE d.STORE_CD = ?
+      AND d.PTN_GRP_CD = ?
       AND d.PTN_CD = ?
     """
 
     with pyodbc.connect(get_conn_str()) as conn:
         cur = conn.cursor()
-        cur.execute(sql, pattern_value, pattern_group_code, pattern_code)
+        cur.execute(sql, pattern_value, store_cd, pattern_group_code, pattern_code)
         rows = cur.rowcount
         conn.commit()
 
     return rows
+
+
+def fetch_user_assigned_store_code(user_id: str) -> str | None:
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return None
+
+    sql = """
+    SELECT TOP 1
+        NULLIF(LTRIM(RTRIM(ASSIGN_STORE_CD)), '') AS ASSIGN_STORE_CD
+    FROM HDHBO.dbo.SYS_USER_MST
+    WHERE USER_ID = ?
+    """
+
+    with pyodbc.connect(get_conn_str()) as conn:
+        cur = conn.cursor()
+        row = cur.execute(sql, normalized_user_id).fetchone()
+
+    if row is None or row.ASSIGN_STORE_CD is None:
+        return None
+    return str(row.ASSIGN_STORE_CD).strip() or None
 
 def load_pos_faq_df() -> pd.DataFrame:
     sql = """

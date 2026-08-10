@@ -21,6 +21,7 @@ from app.command_router import parse_command
 from app.db import (
     fetch_item_master_by_code,
     fetch_plu_master_by_code,
+    fetch_user_assigned_store_code,
     get_post_request_by_key,
     get_post_request_by_seq,
     fetch_pos_pattern_group_by_pos,
@@ -28,6 +29,7 @@ from app.db import (
     fetch_pos_pattern_lookup_page_by_pos,
     fetch_pos_pattern_details_by_pos,
     fetch_pos_pattern_groups_by_pos,
+    is_user_in_auth_group,
     insert_pos_faq_log,
     insert_post_request,
     insert_teams_faq_approval_notifications,
@@ -199,6 +201,7 @@ class PatternLookupRequest(BaseModel):
 
 
 class PatternUpdateRequest(BaseModel):
+    userId: str
     patternGroupCode: str
     patternCode: str
     patternValue: str
@@ -206,6 +209,7 @@ class PatternUpdateRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "userId": "kimjungwoo",
                 "patternGroupCode": "1001",
                 "patternCode": "0001",
                 "patternValue": "2",
@@ -668,6 +672,8 @@ def register_post_request(req: PostRequest, request: Request):
             return _error_response("requestTime must include timezone offset", "INVALID_REQUEST_TIME", 400)
 
         teams_user_id = _empty_to_none(req.teamsUserId) or ""
+        auto_approve = is_user_in_auth_group(teams_user_id, "8000")
+        use_yn = "1" if auto_approve else "0"
 
         _log_api_step(request, "db_insert_start")
         print(req)
@@ -680,11 +686,32 @@ def register_post_request(req: PostRequest, request: Request):
             _empty_to_none(req.answer) or "",
             _empty_to_none(req.keywords),
             req.requestTime,
-            use_yn="0",
+            use_yn=use_yn,
         )
         record_id = insert_result["seq"]
 
         _log_api_step(request, "db_insert_done", record_id=record_id)
+        if auto_approve:
+            _log_api_step(request, "auto_approve_start", record_id=record_id)
+            record = get_post_request_by_key(
+                insert_result["reg_dt"],
+                insert_result["seq"],
+            )
+            if record is None:
+                raise RuntimeError("자동 승인된 FAQ를 다시 조회할 수 없습니다.")
+
+            notification_count = _complete_faq_approval(record)
+            _log_api_step(
+                request,
+                "auto_approve_done",
+                record_id=record_id,
+                recipient_count=notification_count,
+            )
+            return _success_response(
+                record_id,
+                f"게시글이 즉시 승인되어 벡터에 반영되었고 알림 {notification_count}건이 등록되었습니다.",
+            )
+
         return _success_response(record_id, "게시글이 승인대기 상태로 등록되었습니다.")
 
     except Exception:
@@ -981,6 +1008,18 @@ def pattern_update_tool(req: PatternUpdateRequest, request: Request):
         pattern_value = _empty_to_none(
             str(req.patternValue) if req.patternValue is not None else None
         )
+        user_id = _empty_to_none(str(req.userId) if req.userId is not None else None)
+
+        if user_id is None:
+            _log_api_step(request, "validation_failed", field="userId")
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "message": "userId is empty",
+                },
+                media_type="application/json; charset=utf-8",
+            )
 
         if pattern_group_code is None:
             _log_api_step(request, "validation_failed", field="patternGroupCode")
@@ -1015,9 +1054,23 @@ def pattern_update_tool(req: PatternUpdateRequest, request: Request):
                 media_type="application/json; charset=utf-8",
             )
 
+        store_cd = fetch_user_assigned_store_code(user_id)
+        if store_cd is None:
+            _log_api_step(request, "assigned_store_not_found", user_id=user_id)
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "ok": False,
+                    "message": "사용자의 배정 점코드를 찾을 수 없습니다.",
+                },
+                media_type="application/json; charset=utf-8",
+            )
+
         _log_api_step(
             request,
             "pattern_update_start",
+            user_id=user_id,
+            store_cd=store_cd,
             pattern_group_code=pattern_group_code,
             pattern_code=pattern_code,
         )
@@ -1025,6 +1078,7 @@ def pattern_update_tool(req: PatternUpdateRequest, request: Request):
             pattern_group_code,
             pattern_code,
             pattern_value,
+            store_cd,
         )
         ok = updated > 0
         message = (
@@ -1037,6 +1091,7 @@ def pattern_update_tool(req: PatternUpdateRequest, request: Request):
             "pattern_update_done",
             pattern_group_code=pattern_group_code,
             pattern_code=pattern_code,
+            store_cd=store_cd,
             updated=updated,
         )
 
@@ -1047,6 +1102,7 @@ def pattern_update_tool(req: PatternUpdateRequest, request: Request):
                 "patternGroupCode": pattern_group_code,
                 "patternCode": pattern_code,
                 "patternValue": pattern_value,
+                "storeCode": store_cd,
                 "updated": updated,
             },
             media_type="application/json; charset=utf-8",
@@ -1339,13 +1395,40 @@ def chat(req: ChatRequest, request: Request):
                 pos_no = cmd["pos_no"]
                 pattern = cmd["pattern"]
                 new_value = cmd["value"]
+                store_cd = fetch_user_assigned_store_code(req.userId or "")
+                if store_cd is None:
+                    answer = "사용자의 배정 점코드를 찾을 수 없어 패턴을 수정하지 못했습니다."
+                    history = _save_history(
+                        request,
+                        user_id=req.userId,
+                        qry=question,
+                        answer=answer,
+                        category=None,
+                    )
+                    return JSONResponse(
+                        content={
+                            "resCd": "9999",
+                            "resMsg": "assigned_store_not_found",
+                            "answer": answer,
+                            "logSaved": history["saved"],
+                            "logRegDt": history["regDt"],
+                            "logSeq": history["seq"],
+                        },
+                        media_type="application/json; charset=utf-8",
+                    )
 
-                _log_api_step(request, "cmd_pattern_update_start", pos_no=pos_no)
+                _log_api_step(
+                    request,
+                    "cmd_pattern_update_start",
+                    pos_no=pos_no,
+                    store_cd=store_cd,
+                )
                 updated = update_pos_pattern_value(
                     pos_no,
                     pattern.get("type") or "code",
                     pattern.get("value") or "",
                     new_value,
+                    store_cd,
                 )
 
                 if updated > 0:

@@ -271,7 +271,28 @@ def is_barcode_image_attachment(
     return False
 
 
+def allow_tool_menu_without_input_validation(node) -> None:
+    """Ensure navigation actions never validate required card inputs."""
+    if isinstance(node, dict):
+        action_data = node.get("data")
+        if (
+            node.get("type") == "Action.Submit"
+            and isinstance(action_data, dict)
+            and action_data.get("action") == "tool_menu"
+        ):
+            node["associatedInputs"] = "none"
+
+        for value in node.values():
+            allow_tool_menu_without_input_validation(value)
+        return
+
+    if isinstance(node, list):
+        for value in node:
+            allow_tool_menu_without_input_validation(value)
+
+
 def adaptive_attachment(card: dict) -> Attachment:
+    allow_tool_menu_without_input_validation(card)
     return Attachment(
         content_type="application/vnd.microsoft.card.adaptive",
         content=card,
@@ -2639,6 +2660,16 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        teams_account_id, _ = await get_teams_account(
+            turn_context
+        )
+        if not teams_account_id:
+            await turn_context.send_activity(
+                "Teams 계정 아이디를 확인하지 못해 "
+                "패턴 수정 요청을 처리할 수 없습니다."
+            )
+            return
+
         print(
             "[PATTERN UPDATE API REQUEST]"
             f" tool={TOOL_PATTERN_UPDATE}"
@@ -2660,6 +2691,7 @@ class RelayBot(ActivityHandler):
                 target_url=(
                     CONFIG.PATTERN_UPDATE_API_URL
                 ),
+                user_id=teams_account_id,
                 pattern_group_code=(
                     pattern_group_code
                 ),

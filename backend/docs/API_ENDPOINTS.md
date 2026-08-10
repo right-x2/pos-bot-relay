@@ -115,7 +115,9 @@
 
 ### 3.2 POST `/api/posts/request`
 
-신규 FAQ 게시 요청을 승인대기 상태로 등록한다.
+신규 FAQ 게시 요청을 등록한다. 요청자가 권한 그룹 `8000`에 포함되면 즉시 승인하고,
+벡터DB 반영 후 권한 그룹 `8001`의 모든 사용자에게 Teams 알림을 등록한다.
+그 외 사용자는 승인대기 상태로 등록한다.
 
 요청 예시:
 
@@ -152,6 +154,17 @@
   "success": true,
   "requestId": 123,
   "message": "게시글이 승인대기 상태로 등록되었습니다.",
+  "errorCode": null
+}
+```
+
+권한 그룹 `8000` 사용자의 자동 승인 응답 예시:
+
+```json
+{
+  "success": true,
+  "requestId": 123,
+  "message": "게시글이 즉시 승인되어 벡터에 반영되었고 알림 3건이 등록되었습니다.",
   "errorCode": null
 }
 ```
@@ -481,6 +494,7 @@ POS 패턴 상세값을 수정하는 도구 API다.
 
 ```json
 {
+  "userId": "kimjungwoo",
   "patternGroupCode": "1001",
   "patternCode": "0001",
   "patternValue": "2"
@@ -491,6 +505,7 @@ POS 패턴 상세값을 수정하는 도구 API다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
+| `userId` | string | Y | 수정 요청자 ID. `SYS_USER_MST.ASSIGN_STORE_CD` 조회에 사용 |
 | `patternGroupCode` | string | Y | 패턴 그룹 코드 |
 | `patternCode` | string | Y | 패턴 코드 |
 | `patternValue` | string | Y | 수정할 패턴값 |
@@ -504,9 +519,13 @@ POS 패턴 상세값을 수정하는 도구 API다.
   "patternGroupCode": "1001",
   "patternCode": "0001",
   "patternValue": "2",
+  "storeCode": "210",
   "updated": 1
 }
 ```
+
+수정 SQL에는 요청자의 `ASSIGN_STORE_CD`가 `STORE_CD` 조건으로 적용된다.
+사용자 또는 배정 점코드를 찾을 수 없으면 패턴을 수정하지 않는다.
 
 실패 응답 예시:
 

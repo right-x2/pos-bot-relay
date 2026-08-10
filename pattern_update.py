@@ -7,10 +7,12 @@ import aiohttp
 async def update_pattern(
     *,
     target_url: str,
+    user_id: str,
     pattern_group_code: str,
     pattern_code: str,
     pattern_value: str,
 ) -> dict[str, Any]:
+    normalized_user_id = user_id.strip()
     normalized_group_code = (
         pattern_group_code.strip()
     )
@@ -20,6 +22,11 @@ async def update_pattern(
     normalized_pattern_value = (
         pattern_value.strip()
     )
+
+    if not normalized_user_id:
+        raise ValueError(
+            "사용자 아이디가 필요합니다."
+        )
 
     if not normalized_group_code:
         raise ValueError(
@@ -37,6 +44,7 @@ async def update_pattern(
         )
 
     payload = {
+        "userId": normalized_user_id,
         "patternGroupCode": normalized_group_code,
         "patternCode": normalized_pattern_code,
         "patternValue": normalized_pattern_value,
