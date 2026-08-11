@@ -156,7 +156,7 @@ class ApprovePostWithContentRequest(BaseModel):
                 "seq": 123,
                 "title": "상품 검색 오류 처리 방법",
                 "answer": "HBO에서 상품 사용 여부를 확인합니다.",
-                "category": "POS공통",
+                "category": "1",
                 "keywords": "상품검색,상품미존재",
                 "registrantName": "김정우",
             }

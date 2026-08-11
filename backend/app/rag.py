@@ -184,14 +184,12 @@ def delete_faq_vector_by_key(reg_dt: str, seq) -> dict:
     doc_id = _make_doc_id(reg_dt, seq)
     collection = get_collection(create=True)
 
-    found = False
-    try:
-        existing = collection.get(ids=[doc_id], include=["ids"])
-        found = bool(existing.get("ids"))
-    except Exception:
-        found = False
-
-    collection.delete(ids=[doc_id])
+    # Chroma always returns IDs; "ids" is not a valid include item in some
+    # versions (including the pinned 0.5.x runtime).
+    existing = collection.get(ids=[doc_id])
+    found = bool(existing and existing.get("ids"))
+    if found:
+        collection.delete(ids=[doc_id])
 
     return {
         "doc_id": doc_id,

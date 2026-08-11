@@ -127,7 +127,7 @@
   "source": "teams",
   "teamsUserId": "honggildong",
   "teamsUserName": "홍길동",
-  "category": "결제",
+  "category": "1",
   "question": "영수증 재발행은 어떻게 하나요?",
   "answer": "영수증 재발행 메뉴에서 승인번호를 조회한 뒤 재출력합니다.",
   "keywords": "영수증,재발행,승인번호",
@@ -142,7 +142,7 @@
 | `source` | string | Y | 요청 출처 |
 | `teamsUserId` | string | Y | 요청자 ID |
 | `teamsUserName` | string | Y | 요청자 이름 |
-| `category` | string | Y | FAQ 카테고리 |
+| `category` | string | Y | FAQ 카테고리 코드: `1` POS공통, `2` PPOS, `3` APOS, `4` KIOSK, `5` 서버 |
 | `question` | string | Y | FAQ 질문 |
 | `answer` | string | Y | FAQ 답변 |
 | `keywords` | string | N | 검색 키워드 |
@@ -283,7 +283,7 @@ DB의 승인 트랜잭션을 `COMMIT`한 후 이 API를 호출해야 한다.
   "seq": 123,
   "title": "상품 검색 오류 처리 방법",
   "answer": "HBO에서 상품 사용 여부를 확인합니다.",
-  "category": "POS공통",
+  "category": "1",
   "keywords": "상품검색,상품미존재",
   "registrantName": "김정우"
 }
@@ -297,7 +297,7 @@ SQL `OUTPUT INSERTED` 결과를 그대로 보내기 쉽도록 아래 대문자 �
   "SEQ": 123,
   "TITLE": "상품 검색 오류 처리 방법",
   "ANSWER": "HBO에서 상품 사용 여부를 확인합니다.",
-  "CATEGORY": "POS공통",
+  "CATEGORY": "1",
   "KEYWORDS": "상품검색,상품미존재",
   "REG_USER": "김정우"
 }
@@ -371,6 +371,9 @@ DB 상태는 변경하지 않고, 특정 FAQ를 벡터DB에 즉시 upsert한다.
 ### 3.6 POST `/api/admin/posts/delete-embedding-by-key`
 
 특정 FAQ 문서를 벡터DB에서 삭제한다.
+
+삭제 전 Chroma 문서 ID(`POSFAQ_{REG_DT}_{SEQ}`)의 존재 여부를 확인한다.
+문서가 없으면 `NOT_FOUND`(404), Chroma 조회 또는 삭제가 실패하면 `DELETE_FAILED`(500)를 반환한다.
 
 요청 예시:
 

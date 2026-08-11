@@ -42,7 +42,13 @@ from botbuilder.schema import (
     ChannelAccount,
 )
 
-CATEGORIES = ["POS공통", "APOS", "키오스크", "PPOS", "POS서버", "HBO"]
+CATEGORIES = {
+    "1": "POS공통",
+    "2": "PPOS",
+    "3": "APOS",
+    "4": "KIOSK",
+    "5": "서버",
+}
 KST = timezone(timedelta(hours=9))
 
 TOOL_POS_MASTER_CREATE = "pos_master_create"
@@ -1617,10 +1623,10 @@ def create_answer_card(
 def create_register_form_card() -> Attachment:
     choices = [
         {
-            "title": value,
-            "value": value,
+            "title": label,
+            "value": code,
         }
-        for value in CATEGORIES
+        for code, label in CATEGORIES.items()
     ]
 
     card = {
@@ -3238,7 +3244,10 @@ class RelayBot(ActivityHandler):
                 completed_card = (
                     create_register_result_card(
                         success=True,
-                        category=category,
+                        category=CATEGORIES.get(
+                            category,
+                            category,
+                        ),
                         question=question,
                         request_id=result_request_id,
                         message=result_message,
