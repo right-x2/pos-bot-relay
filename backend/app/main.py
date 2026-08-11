@@ -29,6 +29,7 @@ from app.db import (
     fetch_pos_pattern_lookup_page_by_pos,
     fetch_pos_pattern_details_by_pos,
     fetch_pos_pattern_groups_by_pos,
+    fetch_top_faq_questions_by_category,
     is_user_in_auth_group,
     insert_pos_faq_log,
     insert_post_request,
@@ -46,6 +47,14 @@ from app.rag import ask_rag, upsert_faq_vector, delete_faq_vector_by_key
 logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="POS FAQ RAG API")
+
+FAQ_CATEGORY_NAMES = {
+    "1": "POS공통",
+    "2": "PPOS",
+    "3": "APOS",
+    "4": "KIOSK",
+    "5": "서버",
+}
 
 
 @app.middleware("http")
@@ -175,6 +184,20 @@ class DeleteEmbeddingByKeyRequest(BaseModel):
             "example": {
                 "regDt": "20240101",
                 "seq": 123
+            }
+        }
+    )
+
+
+class TopFaqQuestionsRequest(BaseModel):
+    category: str
+    limit: int = Field(default=5, ge=1, le=5)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "category": "1",
+                "limit": 5,
             }
         }
     )
@@ -1693,6 +1716,74 @@ def chat(req: ChatRequest, request: Request):
                 "answer": "답변 생성 중 오류가 발생했습니다."
             },
             media_type="application/json; charset=utf-8"
+        )
+
+
+@app.post("/api/faqs/top-questions")
+def get_top_faq_questions(req: TopFaqQuestionsRequest, request: Request):
+    try:
+        category = str(req.category or "").strip()
+        category_name = FAQ_CATEGORY_NAMES.get(category)
+        if category_name is None:
+            _log_api_step(
+                request,
+                "top_faq_questions_validation_failed",
+                category=category,
+            )
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "message": "category must be one of 1, 2, 3, 4 or 5",
+                },
+                media_type="application/json; charset=utf-8",
+            )
+
+        _log_api_step(
+            request,
+            "top_faq_questions_start",
+            category=category,
+            limit=req.limit,
+        )
+        rows = fetch_top_faq_questions_by_category(category, req.limit)
+        questions = [
+            {
+                "regDt": row.get("REG_DT"),
+                "seq": row.get("SEQ"),
+                "question": row.get("QUESTION"),
+                "category": category,
+                "weight": row.get("WEIGHT"),
+            }
+            for row in rows
+        ]
+        _log_api_step(
+            request,
+            "top_faq_questions_done",
+            category=category,
+            count=len(questions),
+        )
+        return JSONResponse(
+            content={
+                "ok": True,
+                "category": category,
+                "categoryName": category_name,
+                "questions": questions,
+            },
+            media_type="application/json; charset=utf-8",
+        )
+    except Exception:
+        logger.exception(
+            "[api-step] top_faq_questions_failed category=%s request_id=%s",
+            req.category,
+            _get_request_id(request),
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "message": "상위 FAQ 질문 조회 중 오류가 발생했습니다.",
+            },
+            media_type="application/json; charset=utf-8",
         )
 
 

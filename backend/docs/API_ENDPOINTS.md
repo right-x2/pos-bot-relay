@@ -14,6 +14,7 @@
 | POST | `/api/admin/posts/approve-with-content` | 전달받은 FAQ 본문으로 DB 재조회 없이 벡터DB 및 Teams 알림 반영 |
 | POST | `/api/admin/posts/upsert-embedding-by-key` | `REG_DT + SEQ` 기준 FAQ 임베딩 upsert |
 | POST | `/api/admin/posts/delete-embedding-by-key` | `REG_DT + SEQ` 기준 FAQ 임베딩 삭제 |
+| POST | `/api/faqs/top-questions` | 카테고리별 `FILLER1` 가중치 상위 FAQ 질문 조회 |
 | GET | `/api/health` | 헬스체크 |
 | POST | `/tools/create_pos_master` | POS 마스터 상태 갱신용 도구 API |
 | POST | `/tools/pattern_lookup` | POS 패턴 그룹/상세 조회용 도구 API |
@@ -409,7 +410,43 @@ Windows의 Chroma/HNSW 네이티브 삭제 안정성 문제를 피하기 위해
 - `VALIDATION_ERROR`
 - `DELETE_FAILED`
 
-### 3.7 GET `/api/health`
+### 3.7 POST `/api/faqs/top-questions`
+
+활성 FAQ를 카테고리별로 조회하고 `FILLER1` 수치를 내림차순 정렬하여 최대
+5개의 상위 질문을 반환한다. 동일 가중치는 최신 등록일과 SEQ 순으로 정렬한다.
+
+요청 예시:
+
+```json
+{
+  "category": "1",
+  "limit": 5
+}
+```
+
+카테고리는 `1` POS공통, `2` PPOS, `3` APOS, `4` KIOSK, `5` 서버를 사용한다.
+과거 한글 카테고리 데이터도 같은 코드의 조회 결과에 포함한다.
+
+성공 응답 예시:
+
+```json
+{
+  "ok": true,
+  "category": "1",
+  "categoryName": "POS공통",
+  "questions": [
+    {
+      "regDt": "20260811",
+      "seq": 12,
+      "question": "상품이 조회되지 않을 때 어떻게 하나요?",
+      "category": "1",
+      "weight": 8.5
+    }
+  ]
+}
+```
+
+### 3.8 GET `/api/health`
 
 서비스 상태 확인용 API다.
 

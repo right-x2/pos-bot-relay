@@ -9,6 +9,7 @@ $ItemSearchUrl = "http://10.103.201.164:8000/api/items/search"
 $PosMasterUrl = "http://10.103.201.164:8000/tools/create_pos_master"
 $PatternSearchUrl = "http://10.103.201.164:8000/tools/pattern_lookup"
 $PatternUpdateUrl = "http://10.103.201.164:8000/tools/pattern_update"
+$TopFaqQuestionsUrl = "http://10.103.201.164:8000/api/faqs/top-questions"
 
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
 $Listener = New-Object System.Net.HttpListener
@@ -111,6 +112,7 @@ try {
     Write-Host "PosMaster: $PosMasterUrl"
     Write-Host "Pattern  : $PatternSearchUrl"
     Write-Host "PtnUpdate: $PatternUpdateUrl"
+    Write-Host "Top FAQ  : $TopFaqQuestionsUrl"
     Write-Host "Stop     : Ctrl+C"
     Write-Host "============================================================"
 
@@ -143,6 +145,7 @@ try {
                     posMasterUrl = $PosMasterUrl
                     patternSearchUrl = $PatternSearchUrl
                     patternUpdateUrl = $PatternUpdateUrl
+                    topFaqQuestionsUrl = $TopFaqQuestionsUrl
                     serverTime = $Now
                 } | ConvertTo-Json -Depth 10 -Compress
 
@@ -413,6 +416,30 @@ try {
 				   helpYn       = $HelpYn
 				   feedbackText = [string]$Incoming.feedbackText
 				} | ConvertTo-Json -Depth 20 -Compress
+            }
+            elseif ($Path -eq "/api/faqs/top-questions") {
+                $TargetUrl = $TopFaqQuestionsUrl
+
+                $Category = ([string]$Incoming.category).Trim()
+                if ($Category -notmatch "^[1-5]$") {
+                    throw "category must be one of 1, 2, 3, 4 or 5"
+                }
+
+                $Limit = 5
+                if ($null -ne $Incoming.limit) {
+                    if (-not [int]::TryParse([string]$Incoming.limit, [ref]$Limit)) {
+                        throw "limit must be an integer"
+                    }
+                }
+
+                if (($Limit -lt 1) -or ($Limit -gt 5)) {
+                    throw "limit must be between 1 and 5"
+                }
+
+                $ForwardBody = [ordered]@{
+                    category = $Category
+                    limit = $Limit
+                } | ConvertTo-Json -Depth 20 -Compress
             }
             else {
                 $TargetUrl = $ChatUrl

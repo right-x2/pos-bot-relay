@@ -14,6 +14,7 @@ from image_forwarder import (
     forward_teams_image,
 )
 from item_search import search_items
+from faq_questions import fetch_top_faq_questions
 from pattern_search import search_patterns
 from pattern_update import update_pattern
 from pos_master import (
@@ -143,6 +144,11 @@ class Config:
     PATTERN_UPDATE_API_URL = os.getenv(
         "PATTERN_UPDATE_API_URL",
         "http://123.111.174.78:30002/tools/pattern_update",
+    )
+
+    TOP_FAQ_QUESTIONS_API_URL = os.getenv(
+        "TOP_FAQ_QUESTIONS_API_URL",
+        "http://123.111.174.78:30002/api/faqs/top-questions",
     )
 
 CONFIG = Config()
@@ -372,6 +378,136 @@ def create_tool_menu_card() -> Attachment:
                 "data": {
                     "action": "tool_select",
                     "tool": TOOL_GENERAL_CHAT,
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_general_category_card() -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "일반 질문",
+                "weight": "Bolder",
+                "size": "Medium",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": "카테고리를 선택하면 많이 조회된 질문 5개를 보여드립니다.",
+                "isSubtle": True,
+                "wrap": True,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": label,
+                "data": {
+                    "action": "general_category_select",
+                    "category": code,
+                },
+            }
+            for code, label in CATEGORIES.items()
+        ] + [
+            {
+                "type": "Action.Submit",
+                "title": "전체 도구",
+                "data": {
+                    "action": "tool_menu",
+                },
+            }
+        ],
+    }
+
+    return adaptive_attachment(card)
+
+
+def create_top_faq_questions_card(
+    category: str,
+    questions: list[dict],
+) -> Attachment:
+    category_name = CATEGORIES.get(category, category)
+    question_actions = []
+
+    for index, item in enumerate(questions[:5], start=1):
+        question = str(item.get("question", "") or "").strip()
+        if not question:
+            continue
+        display_question = question
+        if len(display_question) > 80:
+            display_question = f"{display_question[:77]}..."
+        question_actions.append(
+            {
+                "type": "ActionSet",
+                "actions": [
+                    {
+                        "type": "Action.Submit",
+                        "title": f"{index}. {display_question}",
+                        "data": {
+                            "action": "general_top_question_select",
+                            "category": category,
+                            "question": question,
+                        },
+                    }
+                ],
+            }
+        )
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"{category_name} 상위 질문",
+            "weight": "Bolder",
+            "size": "Medium",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": "질문을 누르면 바로 답변을 조회합니다.",
+            "isSubtle": True,
+            "wrap": True,
+        },
+    ]
+
+    if question_actions:
+        body.extend(question_actions)
+    else:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": "등록된 상위 질문이 없습니다.",
+                "color": "Warning",
+                "wrap": True,
+            }
+        )
+
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": body,
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "카테고리 선택",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_GENERAL_CHAT,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "전체 도구",
+                "data": {
+                    "action": "tool_menu",
                 },
             },
         ],
@@ -1868,6 +2004,132 @@ async def get_teams_account(
         return "", sender_name
 
 
+async def execute_general_question(
+    turn_context: TurnContext,
+    message: str,
+) -> None:
+    activity = turn_context.activity
+    sender = activity.from_property
+    request_id = str(uuid.uuid4())
+
+    print(
+        "[MESSAGE]"
+        f" request_id={request_id}"
+        f" channel={activity.channel_id}"
+        f" user_id={sender.id if sender else ''}"
+        f" user_name={sender.name if sender else ''}"
+        f" text={message}",
+        flush=True,
+    )
+
+    teams_account_id, teams_user_name = await get_teams_account(turn_context)
+    payload = {
+        "message": message,
+        "user_id": teams_account_id,
+        "user_name": teams_user_name,
+        "channel_id": activity.channel_id,
+        "conversation_id": (
+            activity.conversation.id
+            if activity.conversation
+            else None
+        ),
+        "request_id": request_id,
+        "request_time": datetime.now(KST).isoformat(timespec="seconds"),
+    }
+
+    timeout = aiohttp.ClientTimeout(total=120)
+    typing_stop_event = asyncio.Event()
+    typing_task = asyncio.create_task(
+        keep_typing(turn_context, typing_stop_event)
+    )
+
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                CONFIG.INTERNAL_API_URL,
+                json=payload,
+            ) as response:
+                response_text = await response.text()
+                status_code = response.status
+
+        print(
+            "[INTERNAL RESPONSE]"
+            f" request_id={request_id}"
+            f" status={status_code}"
+            f" body={response_text[:1000]}",
+            flush=True,
+        )
+
+        try:
+            rag_result = json.loads(response_text)
+        except json.JSONDecodeError:
+            rag_result = {}
+
+        rest_cd = str(rag_result.get("restCd", ""))
+        rest_msg = str(rag_result.get("restMsg", ""))
+        answer = str(rag_result.get("answer", "")).strip()
+
+        if status_code == 200 and answer:
+            CARD_CACHE[request_id] = {
+                "question": message,
+                "answer": answer,
+                "logRegDt": rag_result.get("logRegDt"),
+                "logSeq": rag_result.get("logSeq"),
+                "feedbackSubmitted": False,
+                "feedbackProcessing": False,
+            }
+
+            if len(CARD_CACHE) > 1000:
+                oldest_request_id = next(iter(CARD_CACHE))
+                CARD_CACHE.pop(oldest_request_id, None)
+
+            card_attachment = create_answer_card(
+                question=message,
+                answer=answer,
+                request_id=request_id,
+                selected="",
+            )
+            await turn_context.send_activity(
+                MessageFactory.attachment(card_attachment)
+            )
+            return
+
+        error_message = rest_msg or response_text
+        await turn_context.send_activity(
+            "RAG 서버 응답 중 오류가 발생했습니다.\n\n"
+            f"HTTP 상태: {status_code}\n"
+            f"응답 코드: {rest_cd}\n"
+            f"메시지: {error_message}"
+        )
+
+    except Exception as error:
+        print(
+            "[INTERNAL API ERROR]"
+            f" request_id={request_id}"
+            f" type={type(error).__name__}"
+            f" message={error}",
+            file=sys.stderr,
+            flush=True,
+        )
+        await turn_context.send_activity(
+            "Teams 메시지는 수신했지만 "
+            "내부 RAG 서버 호출에 실패했습니다.\n\n"
+            f"{type(error).__name__}: {error}"
+        )
+    finally:
+        typing_stop_event.set()
+        try:
+            await typing_task
+        except Exception as typing_error:
+            print(
+                "[MESSAGE TYPING TASK ERROR]"
+                f" request_id={request_id}"
+                f" type={type(typing_error).__name__}"
+                f" message={typing_error}",
+                flush=True,
+            )
+
+
 class RelayBot(ActivityHandler):
 
     async def on_members_added_activity(
@@ -2018,6 +2280,111 @@ class RelayBot(ActivityHandler):
             None,
         )
 
+    async def handle_general_category_select(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        category = str(submit_value.get("category", "")).strip()
+        if category not in CATEGORIES:
+            await turn_context.send_activity(
+                "올바르지 않은 FAQ 카테고리입니다."
+            )
+            return
+
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(
+            keep_typing(turn_context, typing_stop_event)
+        )
+        try:
+            api_result = await fetch_top_faq_questions(
+                target_url=CONFIG.TOP_FAQ_QUESTIONS_API_URL,
+                category=category,
+                limit=5,
+            )
+        except Exception as error:
+            print(
+                "[TOP FAQ API ERROR]"
+                f" category={category}"
+                f" type={type(error).__name__}"
+                f" message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            await turn_context.send_activity(
+                "상위 질문 조회 중 오류가 발생했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+            return
+        finally:
+            typing_stop_event.set()
+            try:
+                await typing_task
+            except Exception as typing_error:
+                print(
+                    "[TOP FAQ TYPING TASK ERROR]"
+                    f" category={category}"
+                    f" type={type(typing_error).__name__}"
+                    f" message={typing_error}",
+                    flush=True,
+                )
+
+        status_code = int(api_result.get("status", 0) or 0)
+        response_text = str(api_result.get("response_text", ""))
+        response_json = api_result.get("response_json")
+        if not isinstance(response_json, dict):
+            response_json = {}
+
+        print(
+            "[TOP FAQ API RESPONSE]"
+            f" category={category}"
+            f" status={status_code}"
+            f" body={response_text[:1000]}",
+            flush=True,
+        )
+
+        if status_code != 200 or response_json.get("ok") is not True:
+            error_message = str(
+                response_json.get("message")
+                or response_text
+                or "알 수 없는 오류"
+            )
+            await turn_context.send_activity(
+                "상위 질문 조회에 실패했습니다.\n\n"
+                f"HTTP 상태: {status_code}\n"
+                f"내용: {error_message}"
+            )
+            return
+
+        questions = response_json.get("questions")
+        if not isinstance(questions, list):
+            questions = []
+
+        await self.update_or_send_card(
+            turn_context,
+            create_top_faq_questions_card(category, questions),
+        )
+
+    async def handle_general_top_question_select(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        question = str(submit_value.get("question", "") or "").strip()
+        if not question:
+            await turn_context.send_activity(
+                "선택한 질문 내용을 확인할 수 없습니다."
+            )
+            return
+        if len(question) > 2000:
+            await turn_context.send_activity(
+                "질문 내용이 너무 깁니다."
+            )
+            return
+
+        self.clear_pending_search_tool(turn_context)
+        await execute_general_question(turn_context, question)
+
     async def handle_tool_select(
         self,
         turn_context: TurnContext,
@@ -2064,10 +2431,7 @@ class RelayBot(ActivityHandler):
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_tool_status_card(
-                "일반 질문",
-                "채팅창에 질문을 입력하면 기존 LLM으로 전달합니다.",
-            )
+            attachment = create_general_category_card()
         elif tool_name == TOOL_PATTERN_SEARCH:
             self.clear_pending_search_tool(
                 turn_context
@@ -3294,7 +3658,6 @@ class RelayBot(ActivityHandler):
         turn_context: TurnContext,
     ) -> None:
         activity = turn_context.activity
-        sender = activity.from_property
         attachments = activity.attachments or []
 
         pending_search_tool = (
@@ -3657,6 +4020,20 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        if action == "general_category_select":
+            await self.handle_general_category_select(
+                turn_context,
+                submit_value,
+            )
+            return
+
+        if action == "general_top_question_select":
+            await self.handle_general_top_question_select(
+                turn_context,
+                submit_value,
+            )
+            return
+
         if action == "pos_master_create_submit":
             await self.handle_pos_master_create_submit(
                 turn_context,
@@ -3809,6 +4186,20 @@ class RelayBot(ActivityHandler):
             return
 
         if compact_command in {
+            "일반질문",
+            "일반채팅",
+        }:
+            self.clear_pending_search_tool(
+                turn_context
+            )
+            await turn_context.send_activity(
+                MessageFactory.attachment(
+                    create_general_category_card()
+                )
+            )
+            return
+
+        if compact_command in {
             "@등록",
             "등록",
         }:
@@ -3840,164 +4231,7 @@ class RelayBot(ActivityHandler):
             )
             return
 
-        request_id = str(
-            uuid.uuid4()
-        )
-
-        print(
-            "[MESSAGE]"
-            f" request_id={request_id}"
-            f" channel={activity.channel_id}"
-            f" user_id={sender.id if sender else ''}"
-            f" user_name={sender.name if sender else ''}"
-            f" text={message}",
-            flush=True,
-        )
-
-        teams_account_id, teams_user_name = await get_teams_account(turn_context)
-
-        payload = {
-            "message": message,
-            "user_id": teams_account_id,
-            "user_name": teams_user_name,
-            "channel_id": activity.channel_id,
-            "conversation_id": (
-                activity.conversation.id
-                if activity.conversation
-                else None
-            ),
-            "request_id": request_id,
-            "request_time": datetime.now(
-                KST
-            ).isoformat(
-                timespec="seconds"
-            ),
-        }
-
-        timeout = aiohttp.ClientTimeout(
-            total=120
-        )
-
-        typing_stop_event = asyncio.Event()
-        typing_task = asyncio.create_task(
-            keep_typing(
-                turn_context,
-                typing_stop_event,
-            )
-        )
-
-        try:
-            async with aiohttp.ClientSession(
-                timeout=timeout
-            ) as session:
-                async with session.post(
-                    CONFIG.INTERNAL_API_URL,
-                    json=payload,
-                ) as response:
-                    response_text = await response.text()
-                    status_code = response.status
-
-            print(
-                "[INTERNAL RESPONSE]"
-                f" request_id={request_id}"
-                f" status={status_code}"
-                f" body={response_text[:1000]}",
-                flush=True,
-            )
-
-            try:
-                rag_result = json.loads(
-                    response_text
-                )
-            except json.JSONDecodeError:
-                rag_result = {}
-
-            rest_cd = str(
-                rag_result.get("restCd", "")
-            )
-
-            rest_msg = str(
-                rag_result.get("restMsg", "")
-            )
-
-            answer = str(
-                rag_result.get("answer", "")
-            ).strip()
-
-            if status_code == 200 and answer:
-                CARD_CACHE[request_id] = {
-                   "question": message,
-                   "answer": answer,
-                   "logRegDt": rag_result.get("logRegDt"),
-                   "logSeq": rag_result.get("logSeq"),
-                   "feedbackSubmitted": False,
-                   "feedbackProcessing": False,
-                }
-
-                if len(CARD_CACHE) > 1000:
-                    oldest_request_id = next(
-                        iter(CARD_CACHE)
-                    )
-
-                    CARD_CACHE.pop(
-                        oldest_request_id,
-                        None,
-                    )
-
-                card_attachment = create_answer_card(
-                    question=message,
-                    answer=answer,
-                    request_id=request_id,
-                    selected="",
-                )
-
-                await turn_context.send_activity(
-                    MessageFactory.attachment(
-                        card_attachment
-                    )
-                )
-
-                return
-
-            error_message = (
-                rest_msg
-                or response_text
-            )
-
-            await turn_context.send_activity(
-                "RAG 서버 응답 중 오류가 발생했습니다.\n\n"
-                f"HTTP 상태: {status_code}\n"
-                f"응답 코드: {rest_cd}\n"
-                f"메시지: {error_message}"
-            )
-
-        except Exception as error:
-            print(
-                "[INTERNAL API ERROR]"
-                f" request_id={request_id}"
-                f" type={type(error).__name__}"
-                f" message={error}",
-                file=sys.stderr,
-                flush=True,
-            )
-
-            await turn_context.send_activity(
-                "Teams 메시지는 수신했지만 "
-                "내부 RAG 서버 호출에 실패했습니다.\n\n"
-                f"{type(error).__name__}: {error}"
-            )
-        finally:
-            typing_stop_event.set()
-            try:
-                await typing_task
-            except Exception as typing_error:
-                print(
-                    "[MESSAGE TYPING TASK ERROR]"
-                    f" request_id={request_id}"
-                    f" type={type(typing_error).__name__}"
-                    f" message={typing_error}",
-                    flush=True,
-                )
+        await execute_general_question(turn_context, message)
 
 
 BOT = RelayBot()
@@ -4021,6 +4255,9 @@ async def health(
             "service": "pos-bot-relay",
             "chat_api_url": CONFIG.INTERNAL_API_URL,
             "register_api_url": CONFIG.REGISTER_API_URL,
+            "top_faq_questions_api_url": (
+                CONFIG.TOP_FAQ_QUESTIONS_API_URL
+            ),
             "server_time": datetime.now(
                 KST
             ).isoformat(

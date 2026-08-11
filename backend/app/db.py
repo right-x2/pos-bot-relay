@@ -504,6 +504,46 @@ def fetch_user_assigned_store_code(user_id: str) -> str | None:
         return None
     return str(row.ASSIGN_STORE_CD).strip() or None
 
+
+FAQ_CATEGORY_ALIASES = {
+    "1": ("1", "POS공통"),
+    "2": ("2", "PPOS"),
+    "3": ("3", "APOS"),
+    "4": ("4", "KIOSK", "키오스크"),
+    "5": ("5", "서버", "POS서버"),
+}
+
+
+def fetch_top_faq_questions_by_category(
+    category: str,
+    limit: int = 5,
+) -> list[dict]:
+    normalized_category = str(category or "").strip()
+    aliases = FAQ_CATEGORY_ALIASES.get(normalized_category)
+    if aliases is None:
+        raise ValueError("Unsupported FAQ category")
+
+    normalized_limit = max(1, min(int(limit), 5))
+    placeholders = ", ".join("?" for _ in aliases)
+    sql = f"""
+    SELECT TOP (?)
+        REG_DT,
+        SEQ,
+        TITLE AS QUESTION,
+        CATEGORY,
+        COALESCE(TRY_CONVERT(decimal(18, 4), FILLER1), 0) AS WEIGHT
+    FROM HDHBO.dbo.POS_FAQ_MST
+    WHERE ISNULL(USE_YN, '1') = '1'
+      AND CATEGORY IN ({placeholders})
+      AND NULLIF(LTRIM(RTRIM(TITLE)), '') IS NOT NULL
+    ORDER BY
+        COALESCE(TRY_CONVERT(decimal(18, 4), FILLER1), 0) DESC,
+        REG_DT DESC,
+        TRY_CONVERT(INT, SEQ) DESC
+    """
+
+    return _fetch_rows(sql, (normalized_limit, *aliases))
+
 def load_pos_faq_df() -> pd.DataFrame:
     sql = """
     SELECT
