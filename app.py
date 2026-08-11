@@ -59,8 +59,6 @@ TOOL_SINGLE_PRODUCT_LOOKUP = "single_product_lookup"
 TOOL_PATTERN_SEARCH = "pattern_search"
 TOOL_PATTERN_UPDATE = "pattern_update"
 TOOL_GENERAL_CHAT = "general_chat"
-TOOL_FOOD_KIOSK = "food_kiosk"
-TOOL_FOOD_KIOSK_SOLD_OUT = "food_kiosk_sold_out"
 
 TOOL_TITLES = {
     TOOL_POS_MASTER_CREATE: "POS 마스터 생성",
@@ -70,8 +68,6 @@ TOOL_TITLES = {
     TOOL_PATTERN_SEARCH: "패턴 조회",
     TOOL_PATTERN_UPDATE: "패턴 수정",
     TOOL_GENERAL_CHAT: "일반 질문",
-    TOOL_FOOD_KIOSK: "푸드키오스크",
-    TOOL_FOOD_KIOSK_SOLD_OUT: "푸드키오스크 품절처리",
 }
 
 ITEM_RESULT_FIELDS = (
@@ -366,14 +362,6 @@ def create_tool_menu_card() -> Attachment:
             },
             {
                 "type": "Action.Submit",
-                "title": "푸드키오스크",
-                "data": {
-                    "action": "tool_select",
-                    "tool": TOOL_FOOD_KIOSK,
-                },
-            },
-            {
-                "type": "Action.Submit",
                 "title": "일반 질문",
                 "data": {
                     "action": "tool_select",
@@ -501,48 +489,6 @@ def create_top_faq_questions_card(
                 "data": {
                     "action": "tool_select",
                     "tool": TOOL_GENERAL_CHAT,
-                },
-            },
-            {
-                "type": "Action.Submit",
-                "title": "전체 도구",
-                "data": {
-                    "action": "tool_menu",
-                },
-            },
-        ],
-    }
-
-    return adaptive_attachment(card)
-
-
-def create_food_kiosk_tool_menu_card() -> Attachment:
-    card = {
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-        "type": "AdaptiveCard",
-        "version": "1.3",
-        "body": [
-            {
-                "type": "TextBlock",
-                "text": "푸드키오스크",
-                "weight": "Bolder",
-                "size": "Medium",
-                "wrap": True,
-            },
-            {
-                "type": "TextBlock",
-                "text": "처리할 푸드키오스크 업무를 선택해주세요.",
-                "isSubtle": True,
-                "wrap": True,
-            },
-        ],
-        "actions": [
-            {
-                "type": "Action.Submit",
-                "title": "품절처리",
-                "data": {
-                    "action": "tool_select",
-                    "tool": TOOL_FOOD_KIOSK_SOLD_OUT,
                 },
             },
             {
@@ -867,63 +813,6 @@ def create_product_search_result_card(
                 "data": {
                     "action": "tool_select",
                     "tool": TOOL_PRODUCT_SEARCH,
-                },
-            },
-        ],
-    }
-
-    return adaptive_attachment(card)
-
-
-def create_food_kiosk_status_card(
-    tool_name: str,
-) -> Attachment:
-    card = {
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-        "type": "AdaptiveCard",
-        "version": "1.3",
-        "body": [
-            {
-                "type": "TextBlock",
-                "text": TOOL_TITLES[tool_name],
-                "weight": "Bolder",
-                "size": "Medium",
-                "wrap": True,
-            },
-            {
-                "type": "FactSet",
-                "facts": [
-                    {
-                        "title": "실행 도구",
-                        "value": tool_name,
-                    },
-                    {
-                        "title": "상태",
-                        "value": "API 연동 대기",
-                    },
-                ],
-            },
-            {
-                "type": "TextBlock",
-                "text": "도구 선택 라우팅만 준비되어 있습니다.",
-                "isSubtle": True,
-                "wrap": True,
-            },
-        ],
-        "actions": [
-            {
-                "type": "Action.Submit",
-                "title": "푸드키오스크 메뉴",
-                "data": {
-                    "action": "tool_select",
-                    "tool": TOOL_FOOD_KIOSK,
-                },
-            },
-            {
-                "type": "Action.Submit",
-                "title": "전체 도구",
-                "data": {
-                    "action": "tool_menu",
                 },
             },
         ],
@@ -2490,18 +2379,6 @@ class RelayBot(ActivityHandler):
                 tool_name
             )
             attachment = create_product_search_input_card(
-                tool_name
-            )
-        elif tool_name == TOOL_FOOD_KIOSK:
-            self.clear_pending_search_tool(
-                turn_context
-            )
-            attachment = create_food_kiosk_tool_menu_card()
-        elif tool_name == TOOL_FOOD_KIOSK_SOLD_OUT:
-            self.clear_pending_search_tool(
-                turn_context
-            )
-            attachment = create_food_kiosk_status_card(
                 tool_name
             )
         elif tool_name == TOOL_GENERAL_CHAT:
@@ -4205,20 +4082,6 @@ class RelayBot(ActivityHandler):
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_pos_master_form_card()
-                )
-            )
-            return
-
-        if compact_command in {
-            "푸드키오스크",
-            "푸드키오스크도구",
-        }:
-            self.clear_pending_search_tool(
-                turn_context
-            )
-            await turn_context.send_activity(
-                MessageFactory.attachment(
-                    create_food_kiosk_tool_menu_card()
                 )
             )
             return
