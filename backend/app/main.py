@@ -41,6 +41,7 @@ from app.db import (
     update_pos_master_targets,
 )
 from app.rag import ask_rag, upsert_faq_vector, delete_faq_vector_by_key
+from app.item_diagnostics import build_item_diagnosis
 
 # Use Uvicorn's configured logger so INFO diagnostics are visible in the
 # server console without requiring a separate logging configuration.
@@ -1897,6 +1898,11 @@ async def search_item_api(
                 "resolvedCode": resolved_code,
                 "found": bool(result),
                 "result": result,
+                "diagnosis": (
+                    build_item_diagnosis(normalized_type, result)
+                    if result
+                    else None
+                ),
             },
             media_type="application/json; charset=utf-8",
         )

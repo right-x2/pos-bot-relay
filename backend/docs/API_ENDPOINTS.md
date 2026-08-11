@@ -15,6 +15,7 @@
 | POST | `/api/admin/posts/upsert-embedding-by-key` | `REG_DT + SEQ` 기준 FAQ 임베딩 upsert |
 | POST | `/api/admin/posts/delete-embedding-by-key` | `REG_DT + SEQ` 기준 FAQ 임베딩 삭제 |
 | POST | `/api/faqs/top-questions` | 카테고리별 `FILLER1` 가중치 상위 FAQ 질문 조회 |
+| POST | `/api/items/search` | 상품·단품 조회 및 사용/행사 상태 판정 |
 | GET | `/api/health` | 헬스체크 |
 | POST | `/tools/create_pos_master` | POS 마스터 상태 갱신용 도구 API |
 | POST | `/tools/pattern_lookup` | POS 패턴 그룹/상세 조회용 도구 API |
@@ -57,6 +58,16 @@
 ```
 
 - `/tools/*` 계열은 `ok` 필드를 중심으로 응답한다.
+
+### 상·단품 판정 규칙
+
+`/api/items/search`가 조회 결과를 찾으면 `diagnosis`에 아래 판정 근거를 함께 반환한다.
+
+- `사용여부`: `USE_YN`이 `1/Y/YES/TRUE/T`이면 사용 가능, `0/N/NO/FALSE/F`이면 사용 불가로 판정한다. 그 밖의 값과 미설정 값은 확인 필요로 판정한다.
+- `행사`: 단품의 가격 행사(`PRC_EVT_*`), N+N 행사(`NN_EVT_*`), 대상 행사(`TRGT_EVT_*_1`~`5`)를 각각 확인한다. 행사 관련 값이 하나라도 있으면 설정된 행사로 본다.
+- `사용기간`: 행사별 시작일과 종료일에 오늘 날짜가 포함되면 적용 가능, 시작 전이면 예정, 종료 후이면 종료로 판정한다. 날짜가 없거나 시작일이 종료일보다 늦거나 날짜 형식을 해석할 수 없으면 확인 필요로 판정한다.
+- 상품 마스터에는 행사 기간 컬럼이 없으므로 상품 조회에서는 행사와 사용기간을 판정하지 않고 연결된 단품 조회가 필요하다고 안내한다.
+- `USE_YN`이 사용 불가이면 행사 상태와 관계없이 최종 판정은 사용 불가다. 알 수 없는 `USE_YN` 또는 잘못된 행사 기간이 있으면 최종 판정은 확인 필요다.
 
 ## 3. 상세 명세
 

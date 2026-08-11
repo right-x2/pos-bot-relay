@@ -685,9 +685,13 @@ def create_product_search_result_card(
         response_json.get("found")
     )
     result = response_json.get("result")
+    diagnosis = response_json.get("diagnosis")
 
     if not isinstance(result, dict):
         result = {}
+
+    if not isinstance(diagnosis, dict):
+        diagnosis = {}
 
     field_definitions = (
         ITEM_RESULT_FIELDS
@@ -747,6 +751,78 @@ def create_product_search_result_card(
         else "일치하는 조회 결과가 없습니다."
     )
 
+    diagnosis_blocks = []
+    if found and diagnosis:
+        diagnosis_checks = diagnosis.get("checks")
+        if not isinstance(diagnosis_checks, list):
+            diagnosis_checks = []
+
+        diagnosis_facts = []
+        for check in diagnosis_checks:
+            if not isinstance(check, dict):
+                continue
+            label = str(check.get("label", "확인 항목") or "확인 항목")
+            value = str(check.get("value", "-") or "-")
+            message = str(check.get("message", "") or "")
+            diagnosis_facts.append(
+                {
+                    "title": label,
+                    "value": f"{value} - {message}"[:1000],
+                }
+            )
+
+        diagnosis_events = diagnosis.get("events")
+        if not isinstance(diagnosis_events, list):
+            diagnosis_events = []
+        for event in diagnosis_events:
+            if not isinstance(event, dict):
+                continue
+            event_label = str(event.get("label", "행사") or "행사")
+            event_code = str(event.get("code", "") or "")
+            event_name = str(event.get("name", "") or "")
+            event_title = " / ".join(
+                value for value in (event_code, event_name) if value
+            ) or "코드 미설정"
+            start_date = str(event.get("startDate", "") or "제한 없음")
+            end_date = str(event.get("endDate", "") or "제한 없음")
+            period_label = str(event.get("periodLabel", "확인 필요") or "확인 필요")
+            diagnosis_facts.append(
+                {
+                    "title": f"{event_label} ({event_title})",
+                    "value": f"{period_label}: {start_date} ~ {end_date}"[:1000],
+                }
+            )
+
+        diagnosis_blocks = [
+            {
+                "type": "TextBlock",
+                "text": (
+                    "판정 결과: "
+                    + str(diagnosis.get("overallLabel", "확인 필요"))
+                ),
+                "weight": "Bolder",
+                "spacing": "Medium",
+                "wrap": True,
+                "color": (
+                    "Good"
+                    if diagnosis.get("overallStatus") == "AVAILABLE"
+                    else "Attention"
+                    if diagnosis.get("overallStatus") == "UNAVAILABLE"
+                    else "Warning"
+                ),
+            },
+            {
+                "type": "TextBlock",
+                "text": str(diagnosis.get("summary", "")),
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": diagnosis_facts,
+                "spacing": "Small",
+            },
+        ]
+
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -774,6 +850,7 @@ def create_product_search_result_card(
                 "facts": facts,
                 "spacing": "Medium",
             },
+            *diagnosis_blocks,
         ],
         "actions": [
             {
