@@ -2040,6 +2040,12 @@ async def rag_image_chat(
             image_bytes=image_bytes,
             mime_type=content_type,
         )
+        logger.info(
+            "[image-chat] vision_analysis request_id=%s file_name=%s analysis=%r",
+            requestId,
+            original_name,
+            vision_analysis,
+        )
     except Exception:
         traceback.print_exc()
         return JSONResponse(
@@ -2059,6 +2065,11 @@ async def rag_image_chat(
 
     try:
         rag_query = build_image_rag_query(question=question, vision_analysis=vision_analysis)
+        logger.info(
+            "[image-chat] rag_query request_id=%s query=%r",
+            requestId,
+            rag_query,
+        )
     except Exception:
         traceback.print_exc()
         rag_query = ""
@@ -2066,6 +2077,11 @@ async def rag_image_chat(
     if not rag_query:
         rag_query = "\n".join(
             value for value in [question.strip(), vision_analysis.strip()] if value
+        )
+        logger.info(
+            "[image-chat] rag_query_fallback request_id=%s query=%r",
+            requestId,
+            rag_query,
         )
 
     try:
