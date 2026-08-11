@@ -5,6 +5,7 @@ from decimal import Decimal
 import pyodbc
 import pandas as pd
 from app.config import settings
+from app.faq_categories import FAQ_CATEGORY_ALIASES
 
 TEST_STORE_CD = "210"
 logger = logging.getLogger("poschat.db")
@@ -503,15 +504,6 @@ def fetch_user_assigned_store_code(user_id: str) -> str | None:
     if row is None or row.ASSIGN_STORE_CD is None:
         return None
     return str(row.ASSIGN_STORE_CD).strip() or None
-
-
-FAQ_CATEGORY_ALIASES = {
-    "1": ("1", "POS공통"),
-    "2": ("2", "PPOS"),
-    "3": ("3", "APOS"),
-    "4": ("4", "KIOSK", "키오스크"),
-    "5": ("5", "서버", "POS서버"),
-}
 
 
 def fetch_top_faq_questions_by_category(

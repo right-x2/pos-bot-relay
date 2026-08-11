@@ -154,7 +154,7 @@
 | `source` | string | Y | 요청 출처 |
 | `teamsUserId` | string | Y | 요청자 ID |
 | `teamsUserName` | string | Y | 요청자 이름 |
-| `category` | string | Y | FAQ 카테고리 코드: `1` POS공통, `2` PPOS, `3` APOS, `4` KIOSK, `5` 서버 |
+| `category` | string | Y | FAQ 카테고리 코드: `1` POS공통, `2` PPOS, `3` APOS, `4` 서버, `5` HBO, `6` 키오스크 |
 | `question` | string | Y | FAQ 질문 |
 | `answer` | string | Y | FAQ 답변 |
 | `keywords` | string | N | 검색 키워드 |
@@ -435,8 +435,11 @@ Windows의 Chroma/HNSW 네이티브 삭제 안정성 문제를 피하기 위해
 }
 ```
 
-카테고리는 `1` POS공통, `2` PPOS, `3` APOS, `4` KIOSK, `5` 서버를 사용한다.
+카테고리는 `1` POS공통, `2` PPOS, `3` APOS, `4` 서버, `5` HBO, `6` 키오스크를 사용한다.
 과거 한글 카테고리 데이터도 같은 코드의 조회 결과에 포함한다.
+
+기존 숫자 코드 `4`를 KIOSK, `5`를 서버로 저장한 데이터는 신규 체계 적용 전에
+각각 `6` 키오스크, `4` 서버로 데이터 이관이 필요하다.
 
 성공 응답 예시:
 

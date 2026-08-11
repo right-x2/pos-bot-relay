@@ -47,8 +47,9 @@ CATEGORIES = {
     "1": "POS공통",
     "2": "PPOS",
     "3": "APOS",
-    "4": "KIOSK",
-    "5": "서버",
+    "4": "서버",
+    "5": "HBO",
+    "6": "키오스크",
 }
 KST = timezone(timedelta(hours=9))
 

@@ -42,21 +42,13 @@ from app.db import (
 )
 from app.rag import ask_rag, upsert_faq_vector, delete_faq_vector_by_key
 from app.item_diagnostics import build_item_diagnosis
+from app.faq_categories import FAQ_CATEGORY_NAMES, normalize_faq_category
 
 # Use Uvicorn's configured logger so INFO diagnostics are visible in the
 # server console without requiring a separate logging configuration.
 logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="POS FAQ RAG API")
-
-FAQ_CATEGORY_NAMES = {
-    "1": "POS공통",
-    "2": "PPOS",
-    "3": "APOS",
-    "4": "KIOSK",
-    "5": "서버",
-}
-
 
 @app.middleware("http")
 async def log_api_middleware(request: Request, call_next):
@@ -308,10 +300,16 @@ def _success_response(request_id: int, message: str):
 
 def _complete_faq_approval(record: dict) -> int:
     """Reflect an externally approved FAQ in Chroma and queue Teams notices."""
-    upsert_faq_vector(record)
+    normalized_category = normalize_faq_category(record.get("CATEGORY"))
+    if normalized_category is None:
+        raise ValueError("Unsupported FAQ category")
+
+    normalized_record = dict(record)
+    normalized_record["CATEGORY"] = normalized_category
+    upsert_faq_vector(normalized_record)
     return insert_teams_faq_approval_notifications(
-        record.get("TITLE"),
-        record.get("REG_USER"),
+        normalized_record.get("TITLE"),
+        normalized_record.get("REG_USER"),
     )
 
 
@@ -722,6 +720,15 @@ def register_post_request(req: PostRequest, request: Request):
             _log_api_step(request, "validation_failed", field="requestTime")
             return _error_response("requestTime must include timezone offset", "INVALID_REQUEST_TIME", 400)
 
+        category = normalize_faq_category(req.category)
+        if category is None:
+            _log_api_step(request, "validation_failed", field="category")
+            return _error_response(
+                "category must be one of 1, 2, 3, 4, 5 or 6",
+                "VALIDATION_ERROR",
+                400,
+            )
+
         teams_user_id = _empty_to_none(req.teamsUserId) or ""
         auto_approve = is_user_in_auth_group(teams_user_id, "8000")
         use_yn = "1" if auto_approve else "0"
@@ -732,7 +739,7 @@ def register_post_request(req: PostRequest, request: Request):
             _empty_to_none(req.source) or "",
             teams_user_id,
             _empty_to_none(req.teamsUserName) or "",
-            _empty_to_none(req.category) or "",
+            category,
             _empty_to_none(req.question) or "",
             _empty_to_none(req.answer) or "",
             _empty_to_none(req.keywords),
@@ -891,12 +898,21 @@ def approve_post_with_content(req: ApprovePostWithContentRequest, request: Reque
                 return _error_response(f"{field_name} is empty", "VALIDATION_ERROR", 400)
             normalized_fields[field_name] = normalized_value
 
+        normalized_category = normalize_faq_category(normalized_fields["category"])
+        if normalized_category is None:
+            _log_api_step(request, "validation_failed", field="category")
+            return _error_response(
+                "category must be one of 1, 2, 3, 4, 5 or 6",
+                "VALIDATION_ERROR",
+                400,
+            )
+
         record = {
             "REG_DT": reg_dt,
             "SEQ": req.seq,
             "TITLE": normalized_fields["title"],
             "ANSWER": normalized_fields["answer"],
-            "CATEGORY": normalized_fields["category"],
+            "CATEGORY": normalized_category,
             "KEYWORDS": _empty_to_none(req.keywords),
             "REG_USER": normalized_fields["registrantName"],
         }
@@ -1723,7 +1739,7 @@ def chat(req: ChatRequest, request: Request):
 @app.post("/api/faqs/top-questions")
 def get_top_faq_questions(req: TopFaqQuestionsRequest, request: Request):
     try:
-        category = str(req.category or "").strip()
+        category = normalize_faq_category(req.category)
         category_name = FAQ_CATEGORY_NAMES.get(category)
         if category_name is None:
             _log_api_step(
@@ -1735,7 +1751,7 @@ def get_top_faq_questions(req: TopFaqQuestionsRequest, request: Request):
                 status_code=400,
                 content={
                     "ok": False,
-                    "message": "category must be one of 1, 2, 3, 4 or 5",
+                    "message": "category must be one of 1, 2, 3, 4, 5 or 6",
                 },
                 media_type="application/json; charset=utf-8",
             )

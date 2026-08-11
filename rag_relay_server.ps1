@@ -421,8 +421,8 @@ try {
                 $TargetUrl = $TopFaqQuestionsUrl
 
                 $Category = ([string]$Incoming.category).Trim()
-                if ($Category -notmatch "^[1-5]$") {
-                    throw "category must be one of 1, 2, 3, 4 or 5"
+                if ($Category -notmatch "^[1-6]$") {
+                    throw "category must be one of 1, 2, 3, 4, 5 or 6"
                 }
 
                 $Limit = 5
