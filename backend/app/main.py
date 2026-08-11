@@ -41,7 +41,9 @@ from app.db import (
 )
 from app.rag import ask_rag, upsert_faq_vector, delete_faq_vector_by_key
 
-logger = logging.getLogger("poschat.api")
+# Use Uvicorn's configured logger so INFO diagnostics are visible in the
+# server console without requiring a separate logging configuration.
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="POS FAQ RAG API")
 
@@ -945,7 +947,16 @@ def update_help_yn(req: UpdateHelpYnRequest, request: Request):
 )
 def delete_post_embedding_by_key(req: DeleteEmbeddingByKeyRequest, request: Request):
     try:
-        _log_api_step(request, "validate")
+        client_host = request.client.host if request.client else "-"
+        _log_api_step(
+            request,
+            "vector_delete_received",
+            implementation="lookup_then_delete_v2",
+            client_host=client_host,
+            forwarded_for=request.headers.get("x-forwarded-for", "-"),
+            raw_reg_dt=req.regDt,
+            raw_seq=req.seq,
+        )
         reg_dt = _normalize_reg_dt(req.regDt)
         if reg_dt is None:
             _log_api_step(request, "validation_failed", field="regDt")
@@ -956,16 +967,40 @@ def delete_post_embedding_by_key(req: DeleteEmbeddingByKeyRequest, request: Requ
             return _error_response("seq is invalid", "VALIDATION_ERROR", 400)
 
         _log_api_step(request, "vector_delete_start", reg_dt=reg_dt, seq=req.seq)
-        result = delete_faq_vector_by_key(reg_dt, req.seq)
+        result = delete_faq_vector_by_key(
+            reg_dt,
+            req.seq,
+            request_id=_get_request_id(request),
+        )
+        _log_api_step(
+            request,
+            "vector_delete_result",
+            reg_dt=reg_dt,
+            seq=req.seq,
+            doc_id=result.get("doc_id"),
+            found=result.get("found"),
+            deleted=result.get("deleted"),
+        )
         if not result.get("found"):
-            _log_api_step(request, "not_found", reg_dt=reg_dt, seq=req.seq)
+            _log_api_step(
+                request,
+                "vector_delete_not_found",
+                reg_dt=reg_dt,
+                seq=req.seq,
+                doc_id=result.get("doc_id"),
+            )
             return _error_response("벡터에서 삭제할 FAQ를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         _log_api_step(request, "vector_delete_done", reg_dt=reg_dt, seq=req.seq)
         return _success_response(req.seq, "벡터에서 삭제되었습니다.")
 
     except Exception:
-        traceback.print_exc()
+        logger.exception(
+            "[api-step] vector_delete_failed raw_reg_dt=%s raw_seq=%s request_id=%s",
+            req.regDt,
+            req.seq,
+            _get_request_id(request),
+        )
         return _error_response("벡터 삭제 처리 중 오류가 발생했습니다.", "DELETE_FAILED", 500)
 
 

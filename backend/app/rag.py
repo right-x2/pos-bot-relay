@@ -1,5 +1,6 @@
 import os
 import hashlib
+import logging
 import time
 
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
@@ -12,6 +13,11 @@ from chromadb.config import Settings as ChromaSettings
 from app.config import settings
 from app.azure_client import embed_text, chat_answer
 from app.db import increment_faq_counts
+
+
+# Reuse Uvicorn's handler so vector diagnostics are always emitted by the API
+# process at INFO level.
+logger = logging.getLogger("uvicorn.error")
 
 
 def get_collection(create: bool = False):
@@ -174,7 +180,11 @@ def upsert_faq_vector(record: dict) -> dict:
     }
 
 
-def delete_faq_vector_by_key(reg_dt: str, seq) -> dict:
+def delete_faq_vector_by_key(
+    reg_dt: str,
+    seq,
+    request_id: str | None = None,
+) -> dict:
     reg_dt = _safe_str(reg_dt)
     seq = _normalize_seq(seq)
 
@@ -182,20 +192,70 @@ def delete_faq_vector_by_key(reg_dt: str, seq) -> dict:
         raise ValueError("REG_DT or SEQ is missing")
 
     doc_id = _make_doc_id(reg_dt, seq)
+    log_context = {
+        "request_id": request_id or "-",
+        "pid": os.getpid(),
+        "doc_id": doc_id,
+        "collection": settings.CHROMA_COLLECTION,
+        "chroma_dir": settings.CHROMA_DIR,
+    }
+    logger.info(
+        "[vector-delete] lookup_start %s",
+        " ".join(f"{key}={value}" for key, value in log_context.items()),
+    )
+
     collection = get_collection(create=True)
 
     # Chroma always returns IDs; "ids" is not a valid include item in some
     # versions (including the pinned 0.5.x runtime).
-    existing = collection.get(ids=[doc_id])
+    try:
+        existing = collection.get(ids=[doc_id])
+    except Exception:
+        logger.exception(
+            "[vector-delete] lookup_failed %s",
+            " ".join(f"{key}={value}" for key, value in log_context.items()),
+        )
+        raise
+
     found = bool(existing and existing.get("ids"))
+    logger.info(
+        "[vector-delete] lookup_done found=%s ids_count=%s %s",
+        found,
+        len(existing.get("ids") or []) if existing else 0,
+        " ".join(f"{key}={value}" for key, value in log_context.items()),
+    )
+
+    deleted = False
     if found:
-        collection.delete(ids=[doc_id])
+        logger.info(
+            "[vector-delete] delete_start %s",
+            " ".join(f"{key}={value}" for key, value in log_context.items()),
+        )
+        try:
+            collection.delete(ids=[doc_id])
+            deleted = True
+        except Exception:
+            logger.exception(
+                "[vector-delete] delete_failed %s",
+                " ".join(f"{key}={value}" for key, value in log_context.items()),
+            )
+            raise
+        logger.info(
+            "[vector-delete] delete_done %s",
+            " ".join(f"{key}={value}" for key, value in log_context.items()),
+        )
+    else:
+        logger.warning(
+            "[vector-delete] delete_skipped reason=not_found %s",
+            " ".join(f"{key}={value}" for key, value in log_context.items()),
+        )
 
     return {
         "doc_id": doc_id,
         "reg_dt": reg_dt,
         "seq": seq,
         "found": found,
+        "deleted": deleted,
     }
 
 
