@@ -14,7 +14,7 @@ import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.azure_client import build_image_rag_query, extract_barcode_text, vision_answer
 from app.command_router import parse_command
@@ -130,6 +130,35 @@ class ApprovePostByKeyRequest(BaseModel):
                 "regDt": "20240101",
                 "seq": 123,
                 "adminUserName": "관리자홍길동"
+            }
+        }
+    )
+
+
+class ApprovePostWithContentRequest(BaseModel):
+    regDt: str = Field(validation_alias=AliasChoices("regDt", "REG_DT"))
+    seq: int = Field(validation_alias=AliasChoices("seq", "SEQ"))
+    title: str = Field(validation_alias=AliasChoices("title", "TITLE"))
+    answer: str = Field(validation_alias=AliasChoices("answer", "ANSWER"))
+    category: str = Field(validation_alias=AliasChoices("category", "CATEGORY"))
+    keywords: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("keywords", "KEYWORDS"),
+    )
+    registrantName: str = Field(
+        validation_alias=AliasChoices("registrantName", "REG_USER"),
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "regDt": "20260811",
+                "seq": 123,
+                "title": "상품 검색 오류 처리 방법",
+                "answer": "HBO에서 상품 사용 여부를 확인합니다.",
+                "category": "POS공통",
+                "keywords": "상품검색,상품미존재",
+                "registrantName": "김정우",
             }
         }
     )
@@ -803,6 +832,72 @@ def approve_post_by_key(req: ApprovePostByKeyRequest, request: Request):
     except Exception:
         traceback.print_exc()
         return _error_response("게시글 승인 처리 중 오류가 발생했습니다.", "APPROVE_FAILED", 500)
+
+
+@app.post(
+    "/api/admin/posts/approve-with-content",
+    summary="게시글 승인 완료(본문 전달)",
+    description="외부 승인 시스템이 전달한 FAQ 본문으로 DB 재조회 없이 벡터DB와 Teams 알림을 반영합니다.",
+)
+def approve_post_with_content(req: ApprovePostWithContentRequest, request: Request):
+    try:
+        _log_api_step(request, "validate")
+        reg_dt = _normalize_reg_dt(req.regDt)
+        if reg_dt is None:
+            _log_api_step(request, "validation_failed", field="regDt")
+            return _error_response("regDt is invalid", "VALIDATION_ERROR", 400)
+
+        if req.seq <= 0:
+            _log_api_step(request, "validation_failed", field="seq")
+            return _error_response("seq is invalid", "VALIDATION_ERROR", 400)
+
+        required_fields = {
+            "title": req.title,
+            "answer": req.answer,
+            "category": req.category,
+            "registrantName": req.registrantName,
+        }
+        normalized_fields = {}
+        for field_name, value in required_fields.items():
+            normalized_value = _empty_to_none(value)
+            if normalized_value is None:
+                _log_api_step(request, "validation_failed", field=field_name)
+                return _error_response(f"{field_name} is empty", "VALIDATION_ERROR", 400)
+            normalized_fields[field_name] = normalized_value
+
+        record = {
+            "REG_DT": reg_dt,
+            "SEQ": req.seq,
+            "TITLE": normalized_fields["title"],
+            "ANSWER": normalized_fields["answer"],
+            "CATEGORY": normalized_fields["category"],
+            "KEYWORDS": _empty_to_none(req.keywords),
+            "REG_USER": normalized_fields["registrantName"],
+        }
+
+        _log_api_step(request, "vector_upsert_start", reg_dt=reg_dt, seq=req.seq)
+        notification_count = _complete_faq_approval(record)
+        _log_api_step(request, "vector_upsert_done", reg_dt=reg_dt, seq=req.seq)
+        _log_api_step(
+            request,
+            "teams_notification_queued",
+            reg_dt=reg_dt,
+            seq=req.seq,
+            recipient_count=notification_count,
+        )
+
+        return _success_response(
+            req.seq,
+            f"게시글이 벡터에 반영되었고 알림 {notification_count}건이 등록되었습니다.",
+        )
+
+    except Exception:
+        traceback.print_exc()
+        return _error_response(
+            "게시글 승인 완료 처리 중 오류가 발생했습니다.",
+            "APPROVE_WITH_CONTENT_FAILED",
+            500,
+        )
 
 
 @app.post(

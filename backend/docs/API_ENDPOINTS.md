@@ -11,6 +11,7 @@
 | POST | `/api/posts/request` | 신규 FAQ 게시 요청 등록 |
 | POST | `/api/admin/posts/approve` | 외부 승인 확인 후 벡터DB 및 Teams 알림 반영 |
 | POST | `/api/admin/posts/approve-by-key` | `REG_DT + SEQ` 기준 외부 승인 확인 후 벡터DB 및 Teams 알림 반영 |
+| POST | `/api/admin/posts/approve-with-content` | 전달받은 FAQ 본문으로 DB 재조회 없이 벡터DB 및 Teams 알림 반영 |
 | POST | `/api/admin/posts/upsert-embedding-by-key` | `REG_DT + SEQ` 기준 FAQ 임베딩 upsert |
 | POST | `/api/admin/posts/delete-embedding-by-key` | `REG_DT + SEQ` 기준 FAQ 임베딩 삭제 |
 | GET | `/api/health` | 헬스체크 |
@@ -266,6 +267,69 @@ Teams 알림 메시지 형식:
 ```text
 FAQ가 등록됐습니다. FAQ 제목 : {FAQ 제목} / 등록자 : {등록자 이름}
 ```
+
+### 3.4.1 POST `/api/admin/posts/approve-with-content`
+
+외부 시스템이 승인 UPDATE 결과를 직접 전달하는 API다. `POS_FAQ_MST`를 다시 조회하지 않고
+전달받은 내용으로 Chroma 임베딩과 권한 그룹 `8001` Teams 알림을 처리한다.
+
+DB의 승인 트랜잭션을 `COMMIT`한 후 이 API를 호출해야 한다.
+
+요청 예시:
+
+```json
+{
+  "regDt": "20260811",
+  "seq": 123,
+  "title": "상품 검색 오류 처리 방법",
+  "answer": "HBO에서 상품 사용 여부를 확인합니다.",
+  "category": "POS공통",
+  "keywords": "상품검색,상품미존재",
+  "registrantName": "김정우"
+}
+```
+
+SQL `OUTPUT INSERTED` 결과를 그대로 보내기 쉽도록 아래 대문자 필드명도 허용한다.
+
+```json
+{
+  "REG_DT": "20260811",
+  "SEQ": 123,
+  "TITLE": "상품 검색 오류 처리 방법",
+  "ANSWER": "HBO에서 상품 사용 여부를 확인합니다.",
+  "CATEGORY": "POS공통",
+  "KEYWORDS": "상품검색,상품미존재",
+  "REG_USER": "김정우"
+}
+```
+
+요청 필드:
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `regDt` | string | Y | FAQ 등록일, `YYYYMMDD` |
+| `seq` | int | Y | FAQ 순번, 0보다 커야 함 |
+| `title` | string | Y | FAQ 제목 |
+| `answer` | string | Y | FAQ 답변 |
+| `category` | string | Y | FAQ 카테고리 |
+| `keywords` | string | N | 검색 키워드 |
+| `registrantName` | string | Y | FAQ 등록자 이름 |
+
+성공 응답 예시:
+
+```json
+{
+  "success": true,
+  "requestId": 123,
+  "message": "게시글이 벡터에 반영되었고 알림 3건이 등록되었습니다.",
+  "errorCode": null
+}
+```
+
+대표 오류 코드:
+
+- `VALIDATION_ERROR`
+- `APPROVE_WITH_CONTENT_FAILED`
 
 ### 3.5 POST `/api/admin/posts/upsert-embedding-by-key`
 
