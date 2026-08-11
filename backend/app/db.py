@@ -644,7 +644,6 @@ def get_post_request_by_key(reg_dt: str, seq: int):
         ANSWER,
         CATEGORY,
         KEYWORDS,
-        USE_YN,
         FILLER2,
         FILLER3,
         REG_USER
@@ -667,7 +666,6 @@ def get_post_request_by_key(reg_dt: str, seq: int):
         "ANSWER": row.ANSWER,
         "CATEGORY": row.CATEGORY,
         "KEYWORDS": row.KEYWORDS,
-        "USE_YN": row.USE_YN,
         "FILLER2": row.FILLER2,
         "FILLER3": row.FILLER3,
         "REG_USER": row.REG_USER,
@@ -684,7 +682,6 @@ def get_post_request_by_seq(seq: int):
         ANSWER,
         CATEGORY,
         KEYWORDS,
-        USE_YN,
         FILLER2,
         FILLER3,
         REG_USER
@@ -707,7 +704,6 @@ def get_post_request_by_seq(seq: int):
         "ANSWER": row.ANSWER,
         "CATEGORY": row.CATEGORY,
         "KEYWORDS": row.KEYWORDS,
-        "USE_YN": row.USE_YN,
         "FILLER2": row.FILLER2,
         "FILLER3": row.FILLER3,
         "REG_USER": row.REG_USER,

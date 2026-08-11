@@ -177,7 +177,7 @@
 
 ### 3.3 POST `/api/admin/posts/approve`
 
-외부 시스템에서 승인된 FAQ(`USE_YN = '1'`)를 확인하고 벡터DB에 반영한 뒤,
+외부 시스템에서 승인 완료 API를 호출하면 FAQ를 조회해 벡터DB에 반영한 뒤,
 권한 그룹 `8001`의 모든 사용자에게 Teams 알림을 등록한다.
 
 요청 예시:
@@ -211,18 +211,17 @@
 
 - `VALIDATION_ERROR`
 - `NOT_FOUND`
-- `FAQ_NOT_APPROVED`
 - `APPROVE_FAILED`
 
 주의:
 
 - 코드상 `requestId`는 별도 요청 테이블 ID가 아니라 FAQ의 `SEQ` 기준으로 승인 처리된다.
-- 이 API는 `USE_YN`을 변경하지 않는다. 외부 승인 처리가 완료되지 않았으면 `FAQ_NOT_APPROVED`(409)를 반환한다.
+- 이 API는 `USE_YN`을 조회하거나 변경하지 않으며, 외부 시스템의 승인 완료 호출을 신뢰한다.
 - 승인 확인과 벡터 반영이 끝나면 권한 그룹 `8001` 사용자별로 `TASK_GBCD = '02'` 알림을 등록한다.
 
 ### 3.4 POST `/api/admin/posts/approve-by-key`
 
-`REG_DT + SEQ` 기준으로 외부 승인 상태를 확인하고 벡터DB에 반영한 뒤,
+`REG_DT + SEQ` 기준으로 FAQ를 조회해 벡터DB에 반영한 뒤,
 권한 그룹 `8001`의 모든 사용자에게 Teams 알림을 등록한다.
 
 요청 예시:
@@ -260,7 +259,6 @@
 
 - `VALIDATION_ERROR`
 - `NOT_FOUND`
-- `FAQ_NOT_APPROVED`
 - `APPROVE_FAILED`
 
 Teams 알림 메시지 형식:

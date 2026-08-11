@@ -251,10 +251,6 @@ def _success_response(request_id: int, message: str):
     )
 
 
-def _is_approved_faq(record: dict) -> bool:
-    return str(record.get("USE_YN") or "").strip() == "1"
-
-
 def _complete_faq_approval(record: dict) -> int:
     """Reflect an externally approved FAQ in Chroma and queue Teams notices."""
     upsert_faq_vector(record)
@@ -722,7 +718,7 @@ def register_post_request(req: PostRequest, request: Request):
 @app.post(
     "/api/admin/posts/approve",
     summary="게시글 승인",
-    description="외부에서 승인된 FAQ를 확인하고 벡터DB 반영 후 Teams 승인 알림을 등록합니다."
+    description="외부 승인 완료 호출을 받아 FAQ를 조회하고 벡터DB 반영 후 Teams 승인 알림을 등록합니다."
 )
 def approve_post(req: ApprovePostRequest, request: Request):
     try:
@@ -742,14 +738,6 @@ def approve_post(req: ApprovePostRequest, request: Request):
         if record is None:
             _log_api_step(request, "not_found", post_request_id=req.requestId)
             return _error_response("승인 대상 FAQ를 찾을 수 없습니다.", "NOT_FOUND", 404)
-
-        if not _is_approved_faq(record):
-            _log_api_step(request, "not_approved", post_request_id=req.requestId)
-            return _error_response(
-                "아직 승인되지 않은 FAQ입니다.",
-                "FAQ_NOT_APPROVED",
-                409,
-            )
 
         _log_api_step(request, "vector_upsert_start", post_request_id=req.requestId)
         notification_count = _complete_faq_approval(record)
@@ -774,7 +762,7 @@ def approve_post(req: ApprovePostRequest, request: Request):
 @app.post(
     "/api/admin/posts/approve-by-key",
     summary="게시글 승인(등록일/SEQ)",
-    description="REG_DT와 SEQ로 외부 승인 상태를 확인하고 벡터DB 반영 후 Teams 승인 알림을 등록합니다."
+    description="REG_DT와 SEQ로 FAQ를 조회하고 벡터DB 반영 후 Teams 승인 알림을 등록합니다."
 )
 def approve_post_by_key(req: ApprovePostByKeyRequest, request: Request):
     try:
@@ -795,14 +783,6 @@ def approve_post_by_key(req: ApprovePostByKeyRequest, request: Request):
         if record is None:
             _log_api_step(request, "not_found", reg_dt=reg_dt, seq=req.seq)
             return _error_response("승인 대상 FAQ를 찾을 수 없습니다.", "NOT_FOUND", 404)
-
-        if not _is_approved_faq(record):
-            _log_api_step(request, "not_approved", reg_dt=reg_dt, seq=req.seq)
-            return _error_response(
-                "아직 승인되지 않은 FAQ입니다.",
-                "FAQ_NOT_APPROVED",
-                409,
-            )
 
         _log_api_step(request, "vector_upsert_start", reg_dt=reg_dt, seq=req.seq)
         notification_count = _complete_faq_approval(record)
