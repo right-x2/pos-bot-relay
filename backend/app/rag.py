@@ -1,7 +1,11 @@
 import os
 import hashlib
 import logging
+import sqlite3
 import time
+from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 os.environ["CHROMA_TELEMETRY"] = "False"
@@ -20,8 +24,9 @@ from app.db import increment_faq_counts
 logger = logging.getLogger("uvicorn.error")
 
 
-def get_collection(create: bool = False):
-    chroma_client = chromadb.PersistentClient(
+@lru_cache(maxsize=1)
+def get_chroma_client():
+    return chromadb.PersistentClient(
         path=settings.CHROMA_DIR,
         settings=ChromaSettings(
             anonymized_telemetry=False,
@@ -29,10 +34,74 @@ def get_collection(create: bool = False):
         )
     )
 
+
+def get_collection(create: bool = False):
+    chroma_client = get_chroma_client()
+
     if create:
         return chroma_client.get_or_create_collection(settings.CHROMA_COLLECTION)
 
     return chroma_client.get_collection(settings.CHROMA_COLLECTION)
+
+
+def _get_tombstone_db_path() -> Path:
+    configured_path = _safe_str(settings.CHROMA_TOMBSTONE_DB)
+    if configured_path:
+        return Path(configured_path).expanduser().resolve()
+
+    chroma_path = Path(settings.CHROMA_DIR).expanduser().resolve()
+    return chroma_path.parent / f"{chroma_path.name}.tombstones.sqlite3"
+
+
+def _open_tombstone_db() -> sqlite3.Connection:
+    db_path = _get_tombstone_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path, timeout=10)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS deleted_faq_vectors (
+            doc_id TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL
+        )
+        """
+    )
+    return conn
+
+
+def _get_deleted_doc_ids() -> set[str]:
+    with _open_tombstone_db() as conn:
+        rows = conn.execute("SELECT doc_id FROM deleted_faq_vectors").fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def _is_doc_id_deleted(doc_id: str) -> bool:
+    with _open_tombstone_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM deleted_faq_vectors WHERE doc_id = ?",
+            (doc_id,),
+        ).fetchone()
+    return row is not None
+
+
+def _mark_doc_id_deleted(doc_id: str) -> None:
+    deleted_at = datetime.now(timezone.utc).isoformat()
+    with _open_tombstone_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO deleted_faq_vectors (doc_id, deleted_at)
+            VALUES (?, ?)
+            ON CONFLICT(doc_id) DO UPDATE SET deleted_at = excluded.deleted_at
+            """,
+            (doc_id, deleted_at),
+        )
+
+
+def _clear_doc_id_deleted(doc_id: str) -> None:
+    with _open_tombstone_db() as conn:
+        conn.execute(
+            "DELETE FROM deleted_faq_vectors WHERE doc_id = ?",
+            (doc_id,),
+        )
 
 
 def _safe_str(value) -> str:
@@ -166,6 +235,8 @@ def upsert_faq_vector(record: dict) -> dict:
         embeddings=[embedding],
         metadatas=[metadata],
     )
+    # A later approval/upsert restores a previously removed FAQ.
+    _clear_doc_id_deleted(doc_id)
     if timing_on:
         t_now = time.perf_counter()
         _log_timing("upsert", t_now - t_mark, doc_id=doc_id)
@@ -200,83 +271,63 @@ def delete_faq_vector_by_key(
         "chroma_dir": settings.CHROMA_DIR,
     }
     logger.info(
-        "[vector-delete] lookup_start %s",
+        "[vector-delete] tombstone_start %s",
         " ".join(f"{key}={value}" for key, value in log_context.items()),
     )
 
-    collection = get_collection(create=True)
-
-    # Chroma always returns IDs; "ids" is not a valid include item in some
-    # versions (including the pinned 0.5.x runtime).
-    try:
-        existing = collection.get(ids=[doc_id])
-    except Exception:
-        logger.exception(
-            "[vector-delete] lookup_failed %s",
-            " ".join(f"{key}={value}" for key, value in log_context.items()),
-        )
-        raise
-
-    found = bool(existing and existing.get("ids"))
+    # Chroma 0.5.x + hnswlib on Windows can terminate the entire Python
+    # process while applying native HNSW deletes. Do not even initialize a
+    # Chroma client here: persist the exclusion in a separate tombstone store.
+    already_deleted = _is_doc_id_deleted(doc_id)
+    _mark_doc_id_deleted(doc_id)
+    deleted = not already_deleted
     logger.info(
-        "[vector-delete] lookup_done found=%s ids_count=%s %s",
-        found,
-        len(existing.get("ids") or []) if existing else 0,
+        "[vector-delete] tombstone_saved already_deleted=%s %s",
+        already_deleted,
         " ".join(f"{key}={value}" for key, value in log_context.items()),
     )
-
-    deleted = False
-    if found:
-        logger.info(
-            "[vector-delete] delete_start %s",
-            " ".join(f"{key}={value}" for key, value in log_context.items()),
-        )
-        try:
-            collection.delete(ids=[doc_id])
-            deleted = True
-        except Exception:
-            logger.exception(
-                "[vector-delete] delete_failed %s",
-                " ".join(f"{key}={value}" for key, value in log_context.items()),
-            )
-            raise
-        logger.info(
-            "[vector-delete] delete_done %s",
-            " ".join(f"{key}={value}" for key, value in log_context.items()),
-        )
-    else:
-        logger.warning(
-            "[vector-delete] delete_skipped reason=not_found %s",
-            " ".join(f"{key}={value}" for key, value in log_context.items()),
-        )
 
     return {
         "doc_id": doc_id,
         "reg_dt": reg_dt,
         "seq": seq,
-        "found": found,
         "deleted": deleted,
+        "already_deleted": already_deleted,
+        "delete_mode": "tombstone",
     }
 
 
 def search_faq(question: str, top_k: int = 4) -> list[dict]:
     collection = get_collection()
+    deleted_doc_ids = _get_deleted_doc_ids()
+
+    collection_count = collection.count()
+    if collection_count <= 0:
+        return []
 
     q_emb = embed_text(question)
 
+    fetch_count = min(
+        collection_count,
+        max(top_k, top_k + len(deleted_doc_ids)),
+    )
+
     result = collection.query(
         query_embeddings=[q_emb],
-        n_results=top_k,
+        n_results=fetch_count,
         include=["documents", "metadatas", "distances"]
     )
 
+    ids = result.get("ids", [[]])[0]
     docs = result.get("documents", [[]])[0]
     metas = result.get("metadatas", [[]])[0]
     distances = result.get("distances", [[]])[0]
 
     refs = []
 
-    for doc, meta, distance in zip(docs, metas, distances):
+    for doc_id, doc, meta, distance in zip(ids, docs, metas, distances):
+        if doc_id in deleted_doc_ids:
+            continue
         refs.append({
             "content": doc,
             "title": meta.get("title", ""),
@@ -286,6 +337,8 @@ def search_faq(question: str, top_k: int = 4) -> list[dict]:
             "reg_dt": meta.get("reg_dt", ""),
             "distance": float(distance),
         })
+        if len(refs) >= top_k:
+            break
 
     return refs
 

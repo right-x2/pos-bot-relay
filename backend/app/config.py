@@ -15,6 +15,7 @@ class Settings:
 
     CHROMA_DIR = os.getenv("CHROMA_DIR", "./data/chroma")
     CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "pos_faq")
+    CHROMA_TOMBSTONE_DB = os.getenv("CHROMA_TOMBSTONE_DB")
 
     AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
     AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")

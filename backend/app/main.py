@@ -978,21 +978,13 @@ def delete_post_embedding_by_key(req: DeleteEmbeddingByKeyRequest, request: Requ
             reg_dt=reg_dt,
             seq=req.seq,
             doc_id=result.get("doc_id"),
-            found=result.get("found"),
             deleted=result.get("deleted"),
+            already_deleted=result.get("already_deleted"),
+            delete_mode=result.get("delete_mode"),
         )
-        if not result.get("found"):
-            _log_api_step(
-                request,
-                "vector_delete_not_found",
-                reg_dt=reg_dt,
-                seq=req.seq,
-                doc_id=result.get("doc_id"),
-            )
-            return _error_response("벡터에서 삭제할 FAQ를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         _log_api_step(request, "vector_delete_done", reg_dt=reg_dt, seq=req.seq)
-        return _success_response(req.seq, "벡터에서 삭제되었습니다.")
+        return _success_response(req.seq, "FAQ가 검색 대상에서 제거되었습니다.")
 
     except Exception:
         logger.exception(

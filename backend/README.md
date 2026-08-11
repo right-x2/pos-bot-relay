@@ -52,6 +52,27 @@ python .\scripts\verify_runtime.py --chroma-smoke
 
 Chroma 경로는 새 배포 때 임의로 변경하지 않습니다. 상대 경로를 사용한다면 반드시 `backend` 디렉터리에서 서버를 실행해야 같은 저장소를 엽니다.
 
+FAQ 삭제는 Windows HNSW 네이티브 충돌을 피하기 위해 물리 삭제 대신 별도
+SQLite tombstone으로 처리합니다. 기본 파일은 `CHROMA_DIR` 옆의
+`<CHROMA_DIR 이름>.tombstones.sqlite3`이며, 필요하면
+`CHROMA_TOMBSTONE_DB` 환경변수로 경로를 고정할 수 있습니다.
+
+`Delete of nonexisting embedding ID` 다음 `Windows fatal exception: access violation`이
+발생한 Chroma 저장소는 실행을 중지한 상태에서 기존 디렉터리를 백업하고 새
+`CHROMA_DIR`에 승인 FAQ 전체를 재임베딩해야 합니다. 손상된 저장소를 그대로
+재사용하면 남아 있는 DELETE 작업이 다음 upsert 때 다시 실행될 수 있습니다.
+
+복구 재임베딩은 Chroma 물리 삭제를 호출하지 않는 전용 스크립트를 사용합니다.
+
+```powershell
+# .env의 CHROMA_DIR을 사용하지 않은 새 경로로 먼저 변경합니다.
+# 예: CHROMA_DIR=./data/chroma_v3
+python .\scripts\reindex_all_safe.py
+```
+
+대상 디렉터리가 비어 있지 않으면 스크립트가 중단됩니다. 복구 시에는
+`--allow-existing`을 사용하지 않습니다.
+
 ## 실행
 
 ```powershell

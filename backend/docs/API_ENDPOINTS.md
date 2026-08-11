@@ -370,10 +370,12 @@ DB 상태는 변경하지 않고, 특정 FAQ를 벡터DB에 즉시 upsert한다.
 
 ### 3.6 POST `/api/admin/posts/delete-embedding-by-key`
 
-특정 FAQ 문서를 벡터DB에서 삭제한다.
+특정 FAQ 문서를 RAG 검색 대상에서 제거한다.
 
-삭제 전 Chroma 문서 ID(`POSFAQ_{REG_DT}_{SEQ}`)의 존재 여부를 확인한다.
-문서가 없으면 `NOT_FOUND`(404), Chroma 조회 또는 삭제가 실패하면 `DELETE_FAILED`(500)를 반환한다.
+Windows의 Chroma/HNSW 네이티브 삭제 안정성 문제를 피하기 위해
+`collection.delete()`를 호출하지 않고 별도 SQLite tombstone에 문서 ID를 기록한다.
+검색 시 tombstone 문서는 제외하며, 같은 키가 다시 승인되면 tombstone을 해제한다.
+이미 제거된 키를 다시 요청해도 성공으로 처리하는 멱등 API다.
 
 요청 예시:
 
@@ -397,7 +399,7 @@ DB 상태는 변경하지 않고, 특정 FAQ를 벡터DB에 즉시 upsert한다.
 {
   "success": true,
   "requestId": 123,
-  "message": "벡터에서 삭제되었습니다.",
+  "message": "FAQ가 검색 대상에서 제거되었습니다.",
   "errorCode": null
 }
 ```
@@ -405,7 +407,6 @@ DB 상태는 변경하지 않고, 특정 FAQ를 벡터DB에 즉시 upsert한다.
 대표 오류 코드:
 
 - `VALIDATION_ERROR`
-- `NOT_FOUND`
 - `DELETE_FAILED`
 
 ### 3.7 GET `/api/health`
