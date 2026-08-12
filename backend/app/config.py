@@ -16,6 +16,14 @@ class Settings:
     CHROMA_DIR = os.getenv("CHROMA_DIR", "./data/chroma")
     CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "pos_faq")
     CHROMA_TOMBSTONE_DB = os.getenv("CHROMA_TOMBSTONE_DB")
+    IMAGE_RAG_MAX_DISTANCE = float(os.getenv("IMAGE_RAG_MAX_DISTANCE", "0.65"))
+    IMAGE_RAG_FALLBACK_MAX_DISTANCE = float(
+        os.getenv("IMAGE_RAG_FALLBACK_MAX_DISTANCE", "0.75")
+    )
+    IMAGE_RAG_MIN_DISTANCE_GAP = float(
+        os.getenv("IMAGE_RAG_MIN_DISTANCE_GAP", "0.15")
+    )
+    IMAGE_RAG_CANDIDATE_COUNT = int(os.getenv("IMAGE_RAG_CANDIDATE_COUNT", "12"))
 
     AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
     AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")

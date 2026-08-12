@@ -1,6 +1,7 @@
 import os
 import hashlib
 import logging
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -436,31 +437,195 @@ _IMAGE_QUESTION_PLACEHOLDERS = {
     "첨부 이미지 분석",
 }
 
+_VISION_BOILERPLATE_PATTERNS = (
+    r"^\s*\[?\s*이미지\s*분석\s*결과\s*\]?\s*[:：-]?\s*",
+    r"^\s*다음과\s*같이\s*화면\s*정보를\s*추출할\s*수\s*있습니다\s*[.:：-]?\s*",
+    r"^\s*다음과\s*같은\s*화면\s*정보가\s*확인됩니다\s*[.:：-]?\s*",
+)
+
+
+def normalize_vision_analysis_for_retrieval(vision_analysis: str) -> str:
+    normalized = (vision_analysis or "").replace("\r\n", "\n").replace("\r", "\n")
+    normalized = normalized.replace("```json", "").replace("```", "")
+
+    for pattern in _VISION_BOILERPLATE_PATTERNS:
+        normalized = re.sub(pattern, "", normalized, flags=re.IGNORECASE)
+
+    cleaned_lines = []
+    for raw_line in normalized.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        line = re.sub(r"^\s*(?:[-•·]|\d+[.)])\s*", "", line)
+        line = line.replace("**", "").replace("__", "").strip()
+
+        for pattern in _VISION_BOILERPLATE_PATTERNS:
+            line = re.sub(pattern, "", line, flags=re.IGNORECASE).strip()
+
+        if line:
+            cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines)
+
 
 def build_image_retrieval_text(
     question: str,
     vision_analysis: str,
 ) -> str:
     normalized_question = (question or "").strip()
-    normalized_vision = (vision_analysis or "").strip()
+    normalized_vision = normalize_vision_analysis_for_retrieval(vision_analysis)
 
     if normalized_question.lower() in _IMAGE_QUESTION_PLACEHOLDERS:
         normalized_question = ""
 
     sections = []
     if normalized_question:
-        sections.append(f"[사용자 입력]\n{normalized_question}")
+        sections.append(normalized_question)
     if normalized_vision:
-        sections.append(f"[이미지 분석 결과]\n{normalized_vision}")
+        sections.append(normalized_vision)
 
     return "\n\n".join(sections)
 
 
-def _is_relevant_image_reference(ref: dict) -> bool:
+def _reference_distance(ref: dict) -> float:
     try:
-        return float(ref.get("distance", 999)) <= MAX_COUNT_DISTANCE
+        return float(ref.get("distance", 999))
     except (TypeError, ValueError):
-        return False
+        return 999.0
+
+
+def _normalize_match_text(value: str) -> str:
+    return re.sub(r"[^0-9a-z가-힣]+", "", (value or "").lower())
+
+
+def _extract_retrieval_field(retrieval_text: str, field_name: str) -> str:
+    field_patterns = {
+        "오류코드": r"오류\s*코드",
+        "오류문구": r"오류\s*문구",
+    }
+    normalized_field_name = field_name.replace(" ", "")
+    field_pattern = field_patterns.get(
+        normalized_field_name,
+        re.escape(field_name),
+    )
+    pattern = rf"^\s*{field_pattern}\s*[:：]\s*(.+?)\s*$"
+    match = re.search(pattern, retrieval_text or "", flags=re.IGNORECASE | re.MULTILINE)
+    if not match:
+        return ""
+
+    value = match.group(1).strip()
+    if value.lower() in {"없음", "미확인", "확인 불가", "unknown", "none"}:
+        return ""
+    return value
+
+
+def _image_reference_match(ref: dict, retrieval_text: str) -> tuple[int, str]:
+    searchable_text = "\n".join(
+        str(ref.get(key, ""))
+        for key in ("title", "keywords", "content")
+    )
+    normalized_document = _normalize_match_text(searchable_text)
+    error_code = _normalize_match_text(
+        _extract_retrieval_field(retrieval_text, "오류코드")
+    )
+    error_message = _normalize_match_text(
+        _extract_retrieval_field(retrieval_text, "오류문구")
+    )
+
+    if error_code and len(error_code) >= 3 and error_code in normalized_document:
+        return 2, "error_code"
+    if (
+        error_message
+        and len(error_message) >= 6
+        and error_message in normalized_document
+    ):
+        return 1, "error_message"
+    return 0, "vector"
+
+
+def _select_image_references(
+    refs: list[dict],
+    retrieval_text: str,
+    top_k: int,
+) -> list[dict]:
+    if not refs:
+        return []
+
+    max_distance = settings.IMAGE_RAG_MAX_DISTANCE
+    fallback_max_distance = settings.IMAGE_RAG_FALLBACK_MAX_DISTANCE
+    min_distance_gap = settings.IMAGE_RAG_MIN_DISTANCE_GAP
+    ranked_refs = [
+        (ref, *_image_reference_match(ref, retrieval_text))
+        for ref in refs
+    ]
+    ordered_refs = [
+        item[0]
+        for item in sorted(
+            ranked_refs,
+            key=lambda item: (-item[1], _reference_distance(item[0])),
+        )
+    ]
+    match_by_id = {
+        id(ref): (strength, match_type)
+        for ref, strength, match_type in ranked_refs
+    }
+    exact_matches = [
+        ref for ref in ordered_refs
+        if match_by_id[id(ref)][0] > 0
+    ]
+
+    if exact_matches:
+        selected = exact_matches[:top_k]
+        selection_mode = match_by_id[id(selected[0])][1]
+    else:
+        selected = [
+            ref for ref in ordered_refs
+            if _reference_distance(ref) <= max_distance
+        ][:top_k]
+        selection_mode = "threshold"
+
+    if not selected and ordered_refs:
+        first_distance = _reference_distance(ordered_refs[0])
+        second_distance = (
+            _reference_distance(ordered_refs[1])
+            if len(ordered_refs) > 1
+            else 999.0
+        )
+        if (
+            first_distance <= fallback_max_distance
+            and second_distance - first_distance >= min_distance_gap
+        ):
+            selected = [ordered_refs[0]]
+            selection_mode = "clear_leader"
+        else:
+            selection_mode = "rejected"
+
+    logger.info(
+        "[image-rag] reference_selection mode=%s thresholds=(%.3f,%.3f,gap=%.3f) "
+        "candidates=%s selected=%s",
+        selection_mode,
+        max_distance,
+        fallback_max_distance,
+        min_distance_gap,
+        [
+            {
+                "title": str(ref.get("title", "")),
+                "distance": round(_reference_distance(ref), 6),
+                "match": match_by_id[id(ref)][1],
+            }
+            for ref in ordered_refs
+        ],
+        [
+            {
+                "title": str(ref.get("title", "")),
+                "distance": round(_reference_distance(ref), 6),
+                "match": match_by_id[id(ref)][1],
+            }
+            for ref in selected
+        ],
+    )
+    return selected
 
 
 def _claims_image_is_unavailable(answer: str) -> bool:
@@ -503,11 +668,20 @@ def ask_rag(
     image_context: str | None = None,
 ) -> dict:
     search_question = (retrieval_question or question).strip()
-    refs = search_faq(search_question, top_k=top_k)
     normalized_image_context = (image_context or "").strip()
+    search_top_k = (
+        max(top_k, settings.IMAGE_RAG_CANDIDATE_COUNT)
+        if normalized_image_context
+        else top_k
+    )
+    refs = search_faq(search_question, top_k=search_top_k)
 
     if normalized_image_context:
-        refs = [ref for ref in refs if _is_relevant_image_reference(ref)]
+        refs = _select_image_references(
+            refs,
+            retrieval_text=search_question,
+            top_k=top_k,
+        )
 
     if not refs:
         return {
@@ -523,7 +697,6 @@ def ask_rag(
             val = r.get("seq", "")
             seq = str(int(float(val))) if val not in (None, "") else ""
             distance = float(r.get("distance", 999))
-            print(distance)
             if reg_dt and seq and distance <= MAX_COUNT_DISTANCE:
                 distance_weight = max(0.0, 1.0 - distance)
                 items.append((reg_dt, seq, float(w) * distance_weight))

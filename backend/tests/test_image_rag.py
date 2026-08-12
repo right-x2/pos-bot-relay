@@ -17,6 +17,10 @@ config_stub.settings = SimpleNamespace(
     CHROMA_DIR="./data/chroma",
     CHROMA_COLLECTION="pos_faq",
     CHROMA_TOMBSTONE_DB=None,
+    IMAGE_RAG_MAX_DISTANCE=0.65,
+    IMAGE_RAG_FALLBACK_MAX_DISTANCE=0.75,
+    IMAGE_RAG_MIN_DISTANCE_GAP=0.15,
+    IMAGE_RAG_CANDIDATE_COUNT=12,
 )
 sys.modules.setdefault("app.config", config_stub)
 
@@ -33,8 +37,10 @@ from app import rag
 
 
 VISION_ANALYSIS = (
-    "화면에 '카드사 통신장애. 잠시후 거래 재시도[3023]'가 표시되어 있습니다. "
-    "신용카드 결제 과정에서 통신 오류가 발생한 상태입니다."
+    "화면: 신용카드 결제\n"
+    "오류문구: 카드사 통신장애. 잠시후 거래 재시도\n"
+    "오류코드: 3023\n"
+    "상태: 신용카드 결제 중 통신 오류"
 )
 
 
@@ -44,8 +50,8 @@ class ImageRagTests(unittest.TestCase):
             result = rag.ask_rag(
                 "결제가 왜 안 돼?",
                 retrieval_question=(
-                    "[사용자 입력]\n결제가 왜 안 돼?\n\n"
-                    f"[이미지 분석 결과]\n{VISION_ANALYSIS}"
+                    "결제가 왜 안 돼?\n\n"
+                    f"{VISION_ANALYSIS}"
                 ),
                 image_context=VISION_ANALYSIS,
             )
@@ -62,8 +68,8 @@ class ImageRagTests(unittest.TestCase):
         self.assertEqual(
             result,
             (
-                "[사용자 입력]\n이 오류 어떻게 처리해?\n\n"
-                f"[이미지 분석 결과]\n{VISION_ANALYSIS}"
+                "이 오류 어떻게 처리해?\n\n"
+                f"{VISION_ANALYSIS}"
             ),
         )
 
@@ -72,8 +78,30 @@ class ImageRagTests(unittest.TestCase):
             with self.subTest(question=question):
                 self.assertEqual(
                     rag.build_image_retrieval_text(question, VISION_ANALYSIS),
-                    f"[이미지 분석 결과]\n{VISION_ANALYSIS}",
+                    VISION_ANALYSIS,
                 )
+
+    def test_retrieval_text_removes_vision_boilerplate_and_markdown(self):
+        noisy_analysis = (
+            "[이미지 분석 결과] 다음과 같이 화면 정보를 추출할 수 있습니다.\n\n"
+            "- **화면:** 현대백화점 POS 승인 화면\n"
+            "- **오류문구:** 서버 연결에 실패했습니다.\n"
+            "- **오류코드:** Timeout"
+        )
+
+        result = rag.build_image_retrieval_text("", noisy_analysis)
+
+        self.assertEqual(
+            result,
+            (
+                "화면: 현대백화점 POS 승인 화면\n"
+                "오류문구: 서버 연결에 실패했습니다.\n"
+                "오류코드: Timeout"
+            ),
+        )
+        self.assertNotIn("이미지 분석 결과", result)
+        self.assertNotIn("다음과 같이", result)
+        self.assertNotIn("**", result)
 
     def test_ask_rag_embeds_combined_retrieval_text(self):
         retrieval_text = rag.build_image_retrieval_text(
@@ -87,7 +115,7 @@ class ImageRagTests(unittest.TestCase):
                 image_context=VISION_ANALYSIS,
             )
 
-        search.assert_called_once_with(retrieval_text, top_k=4)
+        search.assert_called_once_with(retrieval_text, top_k=12)
 
     def test_search_faq_passes_input_unchanged_to_embedding(self):
         retrieval_text = rag.build_image_retrieval_text(
@@ -114,8 +142,8 @@ class ImageRagTests(unittest.TestCase):
 
     def test_image_context_excludes_unrelated_faq(self):
         refs = [
-            {"title": "관련 FAQ", "distance": 0.4},
-            {"title": "무관한 FAQ", "distance": 0.54},
+            {"title": "관련 FAQ", "distance": 0.5446},
+            {"title": "무관한 FAQ", "distance": 1.0},
         ]
         with (
             patch.object(rag, "search_faq", return_value=refs),
@@ -128,6 +156,82 @@ class ImageRagTests(unittest.TestCase):
         prompt = chat.call_args.args[0]
         self.assertIn("관련 FAQ", prompt)
         self.assertNotIn("무관한 FAQ", prompt)
+
+    def test_image_context_accepts_clear_leader_above_normal_threshold(self):
+        refs = [
+            {"title": "가장 가까운 FAQ", "distance": 0.7},
+            {"title": "무관한 FAQ", "distance": 0.95},
+        ]
+        with (
+            patch.object(rag, "search_faq", return_value=refs),
+            patch.object(rag, "increment_faq_counts"),
+            patch.object(rag, "chat_answer", return_value="FAQ 기반 답변"),
+        ):
+            result = rag.ask_rag("화면 분석", image_context=VISION_ANALYSIS)
+
+        self.assertEqual(
+            [ref["title"] for ref in result["references"]],
+            ["가장 가까운 FAQ"],
+        )
+
+    def test_error_code_match_wins_over_vector_distance(self):
+        refs = [
+            {
+                "title": "가까운 다른 FAQ",
+                "content": "로그인 처리 오류",
+                "distance": 0.4,
+            },
+            {
+                "title": "서버 연결 실패",
+                "content": "오류코드 Timeout 발생 시 서버 통신 상태를 확인한다.",
+                "distance": 0.82,
+            },
+        ]
+        retrieval_text = (
+            "화면: 승인 화면\n"
+            "오류문구: 서버 연결에 실패하였습니다\n"
+            "오류코드: TimeOut\n"
+            "상태: 승인 처리 실패"
+        )
+        with (
+            patch.object(rag, "search_faq", return_value=refs),
+            patch.object(rag, "increment_faq_counts"),
+            patch.object(rag, "chat_answer", return_value="FAQ 기반 답변"),
+        ):
+            result = rag.ask_rag(
+                "",
+                retrieval_question=retrieval_text,
+                image_context=retrieval_text,
+            )
+
+        self.assertEqual(
+            [ref["title"] for ref in result["references"]],
+            ["서버 연결 실패"],
+        )
+
+    def test_error_code_match_accepts_spaced_field_label(self):
+        ref = {
+            "title": "카드사 통신장애",
+            "content": "오류코드 3023 조치 방법",
+            "distance": 0.9,
+        }
+        retrieval_text = "오류 문구: 카드사 통신장애\n오류 코드: 3023"
+
+        strength, match_type = rag._image_reference_match(ref, retrieval_text)
+
+        self.assertEqual(strength, 2)
+        self.assertEqual(match_type, "error_code")
+
+    def test_image_context_rejects_ambiguous_weak_matches(self):
+        refs = [
+            {"title": "약한 후보 1", "distance": 0.7},
+            {"title": "약한 후보 2", "distance": 0.76},
+        ]
+        with patch.object(rag, "search_faq", return_value=refs):
+            result = rag.ask_rag("화면 분석", image_context=VISION_ANALYSIS)
+
+        self.assertEqual(result["references"], [])
+        self.assertEqual(result["answer"], "관련 FAQ를 찾지 못했습니다.")
 
     def test_unavailable_image_claim_is_replaced_with_vision_analysis(self):
         refs = [
