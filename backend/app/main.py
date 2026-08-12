@@ -19,8 +19,10 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from app.azure_client import extract_barcode_text, vision_answer
 from app.command_router import parse_command
 from app.db import (
+    delete_refund_progress,
     fetch_item_master_by_code,
     fetch_plu_master_by_code,
+    fetch_refund_progress,
     fetch_user_assigned_store_code,
     get_post_request_by_key,
     get_post_request_by_seq,
@@ -48,6 +50,7 @@ from app.rag import (
 )
 from app.item_diagnostics import build_item_diagnosis
 from app.faq_categories import FAQ_CATEGORY_NAMES, normalize_faq_category
+from app.refund_tools import normalize_refund_key
 
 # Use Uvicorn's configured logger so INFO diagnostics are visible in the
 # server console without requiring a separate logging configuration.
@@ -267,6 +270,33 @@ class PatternUpdateRequest(BaseModel):
                 "patternValue": "2",
             }
         }
+    )
+
+
+class RefundStatusRequest(BaseModel):
+    storeCode: str
+    saleDate: str
+    posNo: str
+    dealNo: str
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "storeCode": "210",
+                "saleDate": "20260812",
+                "posNo": "1111",
+                "dealNo": "000123",
+            }
+        }
+    )
+
+
+def _normalize_refund_key(req: RefundStatusRequest) -> tuple[str, str, str, str]:
+    return normalize_refund_key(
+        req.storeCode,
+        req.saleDate,
+        req.posNo,
+        req.dealNo,
     )
 
 
@@ -1400,6 +1430,116 @@ def pattern_lookup_tool(req: PatternLookupRequest, request: Request):
                 "ok": False,
                 "message": "패턴 조회 중 오류가 발생했습니다.",
             },
+            media_type="application/json; charset=utf-8",
+        )
+
+
+@app.post("/tools/refund_status")
+def refund_status_tool(req: RefundStatusRequest, request: Request):
+    try:
+        store_code, sale_date, pos_no, deal_no = _normalize_refund_key(req)
+    except ValueError as error:
+        _log_api_step(request, "refund_status_validation_failed", message=str(error))
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "message": str(error)},
+            media_type="application/json; charset=utf-8",
+        )
+
+    try:
+        _log_api_step(
+            request,
+            "refund_status_start",
+            store_code=store_code,
+            sale_date=sale_date,
+            pos_no=pos_no,
+            deal_no=deal_no,
+        )
+        row = fetch_refund_progress(store_code, sale_date, pos_no, deal_no)
+        found = row is not None
+        _log_api_step(request, "refund_status_done", found=found)
+        return JSONResponse(
+            content={
+                "ok": True,
+                "found": found,
+                "message": (
+                    "반품 진행중입니다."
+                    if found
+                    else "반품 진행중이지 않습니다."
+                ),
+                "originalTransaction": {
+                    "storeCode": store_code,
+                    "saleDate": sale_date,
+                    "posNo": pos_no,
+                    "dealNo": deal_no,
+                },
+                "refundProgress": (
+                    {
+                        "storeCode": row.get("SET_STORE_CD"),
+                        "saleDate": row.get("SET_SALE_DT"),
+                        "posNo": row.get("SET_POS_NO"),
+                    }
+                    if row
+                    else None
+                ),
+            },
+            media_type="application/json; charset=utf-8",
+        )
+    except Exception:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "message": "반품 상태조회 중 오류가 발생했습니다."},
+            media_type="application/json; charset=utf-8",
+        )
+
+
+@app.post("/tools/refund_cancel")
+def refund_cancel_tool(req: RefundStatusRequest, request: Request):
+    try:
+        store_code, sale_date, pos_no, deal_no = _normalize_refund_key(req)
+    except ValueError as error:
+        _log_api_step(request, "refund_cancel_validation_failed", message=str(error))
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "message": str(error)},
+            media_type="application/json; charset=utf-8",
+        )
+
+    try:
+        _log_api_step(
+            request,
+            "refund_cancel_start",
+            store_code=store_code,
+            sale_date=sale_date,
+            pos_no=pos_no,
+            deal_no=deal_no,
+        )
+        deleted = delete_refund_progress(store_code, sale_date, pos_no, deal_no)
+        _log_api_step(request, "refund_cancel_done", deleted=deleted)
+        return JSONResponse(
+            content={
+                "ok": True,
+                "deleted": deleted,
+                "message": (
+                    "반품 진행이 취소되었습니다."
+                    if deleted > 0
+                    else "취소할 반품 진행 데이터가 없습니다."
+                ),
+                "originalTransaction": {
+                    "storeCode": store_code,
+                    "saleDate": sale_date,
+                    "posNo": pos_no,
+                    "dealNo": deal_no,
+                },
+            },
+            media_type="application/json; charset=utf-8",
+        )
+    except Exception:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "message": "반품진행 취소 중 오류가 발생했습니다."},
             media_type="application/json; charset=utf-8",
         )
 

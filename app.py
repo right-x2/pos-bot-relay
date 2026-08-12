@@ -17,6 +17,7 @@ from item_search import search_items
 from faq_questions import fetch_top_faq_questions
 from pattern_search import search_patterns
 from pattern_update import update_pattern
+from refund_status import request_refund_operation
 from pos_master import (
     create_pos_master,
     normalize_pos_no_input,
@@ -59,6 +60,7 @@ TOOL_PRODUCT_LOOKUP = "product_lookup"
 TOOL_SINGLE_PRODUCT_LOOKUP = "single_product_lookup"
 TOOL_PATTERN_SEARCH = "pattern_search"
 TOOL_PATTERN_UPDATE = "pattern_update"
+TOOL_REFUND_STATUS = "refund_status"
 TOOL_GENERAL_CHAT = "general_chat"
 
 TOOL_TITLES = {
@@ -68,6 +70,7 @@ TOOL_TITLES = {
     TOOL_SINGLE_PRODUCT_LOOKUP: "단품검색",
     TOOL_PATTERN_SEARCH: "패턴 조회",
     TOOL_PATTERN_UPDATE: "패턴 수정",
+    TOOL_REFUND_STATUS: "반품 상태조회",
     TOOL_GENERAL_CHAT: "일반 질문",
 }
 
@@ -92,11 +95,13 @@ PLU_RESULT_FIELDS = (
     ("PLU_NM", "단품명"),
     ("BILL_PLU_NM", "영수증 단품명"),
     ("ITEM_CD", "상품코드"),
-    ("ITEM_NM", "상품명"),
     ("BRAND_CD", "브랜드코드"),
     ("PC_CD", "PC코드"),
     ("CORNER_CD", "코너코드"),
     ("GNRL_PRC", "일반가격"),
+    ("PRC_EVT_PRC", "행사가"),
+    ("PRC_EVT_CD", "가격행사코드"),
+    ("PRC_EVT_OP_CD", "가격행사 OP코드"),
     ("USE_YN", "사용여부"),
 )
 
@@ -141,6 +146,16 @@ class Config:
     PATTERN_UPDATE_API_URL = os.getenv(
         "PATTERN_UPDATE_API_URL",
         "http://123.111.174.78:30002/tools/pattern_update",
+    )
+
+    REFUND_STATUS_API_URL = os.getenv(
+        "REFUND_STATUS_API_URL",
+        "http://123.111.174.78:30002/tools/refund_status",
+    )
+
+    REFUND_CANCEL_API_URL = os.getenv(
+        "REFUND_CANCEL_API_URL",
+        "http://123.111.174.78:30002/tools/refund_cancel",
     )
 
     TOP_FAQ_QUESTIONS_API_URL = os.getenv(
@@ -359,6 +374,14 @@ def create_tool_menu_card() -> Attachment:
                 "data": {
                     "action": "tool_select",
                     "tool": TOOL_PATTERN_UPDATE,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "반품 상태조회",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_REFUND_STATUS,
                 },
             },
             {
@@ -1032,6 +1055,213 @@ def create_pattern_update_form_card() -> Attachment:
     }
 
     return adaptive_attachment(card)
+
+
+def create_refund_status_form_card() -> Attachment:
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "반품 상태조회",
+                "weight": "Bolder",
+                "size": "Medium",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": "원거래 정보를 모두 입력해주세요.",
+                "isSubtle": True,
+                "wrap": True,
+            },
+            {
+                "type": "Input.Text",
+                "id": "store_code",
+                "label": "점코드",
+                "placeholder": "예: 210",
+                "isRequired": True,
+                "errorMessage": "점코드를 입력해주세요.",
+                "maxLength": 20,
+            },
+            {
+                "type": "Input.Text",
+                "id": "sale_date",
+                "label": "영업일자",
+                "placeholder": "예: 20260812 또는 2026-08-12",
+                "isRequired": True,
+                "errorMessage": "영업일자를 입력해주세요.",
+                "maxLength": 10,
+            },
+            {
+                "type": "Input.Text",
+                "id": "pos_no",
+                "label": "POS 번호",
+                "placeholder": "예: 1111",
+                "isRequired": True,
+                "errorMessage": "POS 번호를 입력해주세요.",
+                "maxLength": 20,
+            },
+            {
+                "type": "Input.Text",
+                "id": "deal_no",
+                "label": "거래번호",
+                "placeholder": "예: 000123",
+                "isRequired": True,
+                "errorMessage": "거래번호를 입력해주세요.",
+                "maxLength": 30,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "조회",
+                "style": "positive",
+                "data": {
+                    "action": "refund_status_submit",
+                    "tool": TOOL_REFUND_STATUS,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "도구 메뉴",
+                "data": {"action": "tool_menu"},
+            },
+        ],
+    }
+    return adaptive_attachment(card)
+
+
+def create_refund_status_result_card(response_json: dict) -> Attachment:
+    found = bool(response_json.get("found"))
+    original = response_json.get("originalTransaction")
+    progress = response_json.get("refundProgress")
+    if not isinstance(original, dict):
+        original = {}
+    if not isinstance(progress, dict):
+        progress = {}
+
+    facts = [
+        {"title": "점코드", "value": str(original.get("storeCode") or "-")},
+        {"title": "영업일자", "value": str(original.get("saleDate") or "-")},
+        {"title": "POS 번호", "value": str(original.get("posNo") or "-")},
+        {"title": "거래번호", "value": str(original.get("dealNo") or "-")},
+    ]
+    if found:
+        facts.extend(
+            [
+                {"title": "진행 점코드", "value": str(progress.get("storeCode") or "-")},
+                {"title": "진행 영업일자", "value": str(progress.get("saleDate") or "-")},
+                {"title": "진행 POS 번호", "value": str(progress.get("posNo") or "-")},
+            ]
+        )
+
+    actions = []
+    if found:
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "반품진행 취소",
+                "style": "destructive",
+                "data": {
+                    "action": "refund_cancel_submit",
+                    "tool": TOOL_REFUND_STATUS,
+                    "store_code": str(original.get("storeCode") or ""),
+                    "sale_date": str(original.get("saleDate") or ""),
+                    "pos_no": str(original.get("posNo") or ""),
+                    "deal_no": str(original.get("dealNo") or ""),
+                },
+            }
+        )
+    actions.extend(
+        [
+            {
+                "type": "Action.Submit",
+                "title": "다시 조회",
+                "data": {"action": "tool_select", "tool": TOOL_REFUND_STATUS},
+            },
+            {
+                "type": "Action.Submit",
+                "title": "도구 메뉴",
+                "data": {"action": "tool_menu"},
+            },
+        ]
+    )
+
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "반품 상태조회 결과",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Attention" if found else "Good",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": (
+                    "반품 진행중입니다."
+                    if found
+                    else "반품 진행중이지 않습니다."
+                ),
+                "weight": "Bolder",
+                "wrap": True,
+            },
+            {"type": "FactSet", "facts": facts},
+        ],
+        "actions": actions,
+    }
+    return adaptive_attachment(card)
+
+
+def create_refund_cancel_result_card(response_json: dict) -> Attachment:
+    try:
+        deleted = max(int(response_json.get("deleted", 0) or 0), 0)
+    except (TypeError, ValueError):
+        deleted = 0
+    message = str(
+        response_json.get("message")
+        or ("반품 진행이 취소되었습니다." if deleted else "취소할 반품 진행 데이터가 없습니다.")
+    )
+    return adaptive_attachment(
+        {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.3",
+            "body": [
+                {
+                    "type": "TextBlock",
+                    "text": "반품진행 취소 결과",
+                    "weight": "Bolder",
+                    "size": "Medium",
+                    "color": "Good" if deleted else "Warning",
+                    "wrap": True,
+                },
+                {"type": "TextBlock", "text": message[:1000], "wrap": True},
+                {
+                    "type": "FactSet",
+                    "facts": [{"title": "삭제 건수", "value": f"{deleted}건"}],
+                },
+            ],
+            "actions": [
+                {
+                    "type": "Action.Submit",
+                    "title": "다시 조회",
+                    "data": {"action": "tool_select", "tool": TOOL_REFUND_STATUS},
+                },
+                {
+                    "type": "Action.Submit",
+                    "title": "도구 메뉴",
+                    "data": {"action": "tool_menu"},
+                },
+            ],
+        }
+    )
 
 
 def create_pattern_update_result_card(
@@ -2397,6 +2627,11 @@ class RelayBot(ActivityHandler):
                 turn_context
             )
             attachment = create_pattern_update_form_card()
+        elif tool_name == TOOL_REFUND_STATUS:
+            self.clear_pending_search_tool(
+                turn_context
+            )
+            attachment = create_refund_status_form_card()
         else:
             await turn_context.send_activity(
                 "올바르지 않은 도구 선택입니다."
@@ -3113,6 +3348,124 @@ class RelayBot(ActivityHandler):
                 response_json=response_json,
             ),
         )
+
+    async def handle_refund_status_submit(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+        *,
+        cancel: bool = False,
+    ) -> None:
+        store_code = str(submit_value.get("store_code", "")).strip()
+        sale_date = str(submit_value.get("sale_date", "")).strip()
+        pos_no = str(submit_value.get("pos_no", "")).strip()
+        deal_no = str(submit_value.get("deal_no", "")).strip()
+
+        labels = (
+            (store_code, "점코드를 입력해주세요."),
+            (sale_date, "영업일자를 입력해주세요."),
+            (pos_no, "POS 번호를 입력해주세요."),
+            (deal_no, "거래번호를 입력해주세요."),
+        )
+        for value, message in labels:
+            if not value:
+                await turn_context.send_activity(message)
+                return
+
+        normalized_sale_date = (
+            sale_date.replace("-", "")
+            .replace("/", "")
+            .replace(".", "")
+        )
+        if len(normalized_sale_date) != 8 or not normalized_sale_date.isdigit():
+            await turn_context.send_activity(
+                "영업일자는 YYYYMMDD 또는 YYYY-MM-DD 형식으로 입력해주세요."
+            )
+            return
+        try:
+            datetime.strptime(normalized_sale_date, "%Y%m%d")
+        except ValueError:
+            await turn_context.send_activity("유효한 영업일자를 입력해주세요.")
+            return
+        if any(len(value) > 30 for value in (store_code, pos_no, deal_no)):
+            await turn_context.send_activity("입력값의 허용 길이를 초과했습니다.")
+            return
+
+        target_url = (
+            CONFIG.REFUND_CANCEL_API_URL
+            if cancel
+            else CONFIG.REFUND_STATUS_API_URL
+        )
+        operation = "취소" if cancel else "조회"
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(
+            keep_typing(turn_context, typing_stop_event)
+        )
+        try:
+            api_result = await request_refund_operation(
+                target_url=target_url,
+                store_code=store_code,
+                sale_date=normalized_sale_date,
+                pos_no=pos_no,
+                deal_no=deal_no,
+            )
+        except Exception as error:
+            print(
+                f"[REFUND {operation} API ERROR]"
+                f" type={type(error).__name__} message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
+            await turn_context.send_activity(
+                f"반품 {operation} 중 오류가 발생했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+            return
+        finally:
+            typing_stop_event.set()
+            try:
+                await typing_task
+            except Exception as typing_error:
+                print(
+                    "[REFUND TYPING TASK ERROR]"
+                    f" type={type(typing_error).__name__} message={typing_error}",
+                    flush=True,
+                )
+
+        status_code = int(api_result.get("status", 0) or 0)
+        response_text = str(api_result.get("response_text", ""))
+        response_json = api_result.get("response_json")
+        if not isinstance(response_json, dict):
+            response_json = {}
+
+        print(
+            f"[REFUND {operation} API RESPONSE]"
+            f" status={status_code} body={response_text[:1000]}",
+            flush=True,
+        )
+        if (
+            status_code < 200
+            or status_code >= 300
+            or response_json.get("ok") is not True
+        ):
+            message = str(
+                response_json.get("message")
+                or response_text
+                or "알 수 없는 오류"
+            )
+            await turn_context.send_activity(
+                f"반품 {operation} 요청에 실패했습니다.\n\n"
+                f"HTTP 상태: {status_code}\n내용: {message}"
+            )
+            return
+
+        attachment = (
+            create_refund_cancel_result_card(response_json)
+            if cancel
+            else create_refund_status_result_card(response_json)
+        )
+        await self.update_or_send_card(turn_context, attachment)
 
     async def handle_feedback(
         self,
@@ -4020,6 +4373,21 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        if action == "refund_status_submit":
+            await self.handle_refund_status_submit(
+                turn_context,
+                submit_value,
+            )
+            return
+
+        if action == "refund_cancel_submit":
+            await self.handle_refund_status_submit(
+                turn_context,
+                submit_value,
+                cancel=True,
+            )
+            return
+
         if action == "feedback":
             await self.handle_feedback(
                 turn_context,
@@ -4122,6 +4490,20 @@ class RelayBot(ActivityHandler):
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_pattern_update_form_card()
+                )
+            )
+            return
+
+        if compact_command in {
+            "반품상태조회",
+            "반품조회",
+        }:
+            self.clear_pending_search_tool(
+                turn_context
+            )
+            await turn_context.send_activity(
+                MessageFactory.attachment(
+                    create_refund_status_form_card()
                 )
             )
             return

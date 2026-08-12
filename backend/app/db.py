@@ -506,6 +506,56 @@ def fetch_user_assigned_store_code(user_id: str) -> str | None:
     return str(row.ASSIGN_STORE_CD).strip() or None
 
 
+def fetch_refund_progress(
+    store_cd: str,
+    sale_dt: str,
+    pos_no: str,
+    deal_no: str,
+) -> dict | None:
+    sql = """
+    SELECT TOP 1
+        STORE_CD,
+        SALE_DT,
+        POS_NO,
+        DEAL_NO,
+        SET_STORE_CD,
+        SET_SALE_DT,
+        SET_POS_NO
+    FROM HDTRAN..TR_POS_TRANCALL_RFND
+    WHERE STORE_CD = ?
+      AND SALE_DT = ?
+      AND POS_NO = ?
+      AND DEAL_NO = ?
+    """
+    rows = _fetch_rows(sql, (store_cd, sale_dt, pos_no, deal_no))
+    return rows[0] if rows else None
+
+
+def delete_refund_progress(
+    store_cd: str,
+    sale_dt: str,
+    pos_no: str,
+    deal_no: str,
+) -> int:
+    sql = """
+    SET NOCOUNT ON;
+
+    DELETE FROM HDTRAN..TR_POS_TRANCALL_RFND
+    WHERE STORE_CD = ?
+      AND SALE_DT = ?
+      AND POS_NO = ?
+      AND DEAL_NO = ?;
+
+    SELECT CAST(@@ROWCOUNT AS INT) AS DELETED_COUNT;
+    """
+    with pyodbc.connect(get_conn_str()) as conn:
+        cur = conn.cursor()
+        row = cur.execute(sql, store_cd, sale_dt, pos_no, deal_no).fetchone()
+        deleted = int(row[0]) if row is not None else 0
+        conn.commit()
+    return max(deleted, 0)
+
+
 def fetch_top_faq_questions_by_category(
     category: str,
     limit: int = 5,

@@ -9,6 +9,8 @@ $ItemSearchUrl = "http://10.103.201.164:8000/api/items/search"
 $PosMasterUrl = "http://10.103.201.164:8000/tools/create_pos_master"
 $PatternSearchUrl = "http://10.103.201.164:8000/tools/pattern_lookup"
 $PatternUpdateUrl = "http://10.103.201.164:8000/tools/pattern_update"
+$RefundStatusUrl = "http://10.103.201.164:8000/tools/refund_status"
+$RefundCancelUrl = "http://10.103.201.164:8000/tools/refund_cancel"
 $TopFaqQuestionsUrl = "http://10.103.201.164:8000/api/faqs/top-questions"
 
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -112,6 +114,8 @@ try {
     Write-Host "PosMaster: $PosMasterUrl"
     Write-Host "Pattern  : $PatternSearchUrl"
     Write-Host "PtnUpdate: $PatternUpdateUrl"
+    Write-Host "Refund   : $RefundStatusUrl"
+    Write-Host "RfndCancel: $RefundCancelUrl"
     Write-Host "Top FAQ  : $TopFaqQuestionsUrl"
     Write-Host "Stop     : Ctrl+C"
     Write-Host "============================================================"
@@ -145,6 +149,8 @@ try {
                     posMasterUrl = $PosMasterUrl
                     patternSearchUrl = $PatternSearchUrl
                     patternUpdateUrl = $PatternUpdateUrl
+                    refundStatusUrl = $RefundStatusUrl
+                    refundCancelUrl = $RefundCancelUrl
                     topFaqQuestionsUrl = $TopFaqQuestionsUrl
                     serverTime = $Now
                 } | ConvertTo-Json -Depth 10 -Compress
@@ -384,6 +390,42 @@ try {
                     patternGroupCode = $PatternGroupCode.Trim()
                     patternCode = $PatternCode.Trim()
                     patternValue = $PatternValue.Trim()
+                } | ConvertTo-Json -Depth 20 -Compress
+            }
+            elseif (
+                ($Path -eq "/tools/refund_status") -or
+                ($Path -eq "/tools/refund_cancel")
+            ) {
+                if ($Path -eq "/tools/refund_cancel") {
+                    $TargetUrl = $RefundCancelUrl
+                }
+                else {
+                    $TargetUrl = $RefundStatusUrl
+                }
+
+                $StoreCode = ([string]$Incoming.storeCode).Trim()
+                $SaleDate = ([string]$Incoming.saleDate).Trim()
+                $PosNo = ([string]$Incoming.posNo).Trim()
+                $DealNo = ([string]$Incoming.dealNo).Trim()
+
+                if ([string]::IsNullOrWhiteSpace($StoreCode)) {
+                    throw "Missing storeCode"
+                }
+                if ($SaleDate -notmatch "^\d{8}$") {
+                    throw "saleDate must be YYYYMMDD"
+                }
+                if ([string]::IsNullOrWhiteSpace($PosNo)) {
+                    throw "Missing posNo"
+                }
+                if ([string]::IsNullOrWhiteSpace($DealNo)) {
+                    throw "Missing dealNo"
+                }
+
+                $ForwardBody = [ordered]@{
+                    storeCode = $StoreCode
+                    saleDate = $SaleDate
+                    posNo = $PosNo
+                    dealNo = $DealNo
                 } | ConvertTo-Json -Depth 20 -Compress
             }
             elseif ($Path -eq "/api/logs/help-yn") {

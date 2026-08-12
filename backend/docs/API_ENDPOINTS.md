@@ -20,6 +20,8 @@
 | POST | `/tools/create_pos_master` | POS 마스터 상태 갱신용 도구 API |
 | POST | `/tools/pattern_lookup` | POS 패턴 그룹/상세 조회용 도구 API |
 | POST | `/tools/pattern_update` | POS 패턴 상세값 수정용 도구 API |
+| POST | `/tools/refund_status` | 원거래 키 기준 반품 진행 상태 및 진행 POS 조회 |
+| POST | `/tools/refund_cancel` | 원거래 키 기준 반품 진행 데이터 삭제 |
 
 ## 2. 공통 사항
 
@@ -68,6 +70,56 @@
 - `사용기간`: 행사별 시작일과 종료일에 오늘 날짜가 포함되면 적용 가능, 시작 전이면 예정, 종료 후이면 종료로 판정한다. 날짜가 없거나 시작일이 종료일보다 늦거나 날짜 형식을 해석할 수 없으면 확인 필요로 판정한다.
 - 상품 마스터에는 행사 기간 컬럼이 없으므로 상품 조회에서는 행사와 사용기간을 판정하지 않고 연결된 단품 조회가 필요하다고 안내한다.
 - `USE_YN`이 사용 불가이면 행사 상태와 관계없이 최종 판정은 사용 불가다. 알 수 없는 `USE_YN` 또는 잘못된 행사 기간이 있으면 최종 판정은 확인 필요다.
+
+### 반품 상태조회 및 취소
+
+`/tools/refund_status`와 `/tools/refund_cancel`은 같은 원거래 키를 사용한다.
+
+요청 예시:
+
+```json
+{
+  "storeCode": "210",
+  "saleDate": "20260812",
+  "posNo": "1111",
+  "dealNo": "000123"
+}
+```
+
+- 상태조회는 `HDTRAN..TR_POS_TRANCALL_RFND`에서 `STORE_CD`, `SALE_DT`, `POS_NO`, `DEAL_NO`가 모두 일치하는 데이터를 찾는다.
+- 조회되면 `SET_STORE_CD`, `SET_SALE_DT`, `SET_POS_NO`를 현재 반품 진행 위치로 반환한다.
+- 취소는 동일한 네 개 조건으로 반품 진행 데이터를 삭제하며, 삭제 대상이 없으면 `deleted`가 `0`이다.
+
+상태조회 성공 응답 예시:
+
+```json
+{
+  "ok": true,
+  "found": true,
+  "message": "반품 진행중입니다.",
+  "originalTransaction": {
+    "storeCode": "210",
+    "saleDate": "20260812",
+    "posNo": "1111",
+    "dealNo": "000123"
+  },
+  "refundProgress": {
+    "storeCode": "220",
+    "saleDate": "20260812",
+    "posNo": "2001"
+  }
+}
+```
+
+취소 성공 응답 예시:
+
+```json
+{
+  "ok": true,
+  "deleted": 1,
+  "message": "반품 진행이 취소되었습니다."
+}
+```
 
 ## 3. 상세 명세
 
