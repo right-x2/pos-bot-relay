@@ -2085,7 +2085,11 @@ async def rag_image_chat(
         )
 
     try:
-        rag_result = ask_rag(question=question, retrieval_question=rag_query)
+        rag_result = ask_rag(
+            question=question,
+            retrieval_question=rag_query,
+            image_context=vision_analysis,
+        )
         answer = rag_result["answer"]
     except Exception:
         traceback.print_exc()
