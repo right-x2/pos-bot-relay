@@ -13,7 +13,7 @@ from image_forwarder import (
     download_teams_image_attachment,
     forward_teams_image,
 )
-from item_display import format_product_result_value
+from item_display import format_item_use_period, format_product_result_value
 from item_search import search_items
 from faq_questions import fetch_top_faq_questions
 from pattern_search import search_patterns
@@ -91,6 +91,9 @@ ITEM_RESULT_FIELDS = (
     ("JSMN_BLK_ENURI_RT", "자스민블랙 에누리"),
     ("UCARD_PNT_ACM_RT", "백화점 임직원 에누리(11카드 20%)"),
     ("OUTLET_PNT_ACM_RT", "협력사 에누리(13카드 10%)"),
+    ("TCP_PNT_ACM_RT", "TCP적립율"),
+    ("HCARD_PNT_ACM_RT", "HPOINT적립율"),
+    ("USE_PERIOD", "사용기간"),
     ("USE_YN", "사용여부"),
 )
 
@@ -709,6 +712,15 @@ def create_product_search_result_card(
 
     if found:
         for field_name, field_title in field_definitions:
+            if field_name == "USE_PERIOD":
+                period = format_item_use_period(
+                    result.get("USE_START_DT"),
+                    result.get("USE_END_DT"),
+                )
+                if period is not None:
+                    facts.append({"title": field_title, "value": period})
+                continue
+
             if (
                 field_name in result
                 and result[field_name] is not None

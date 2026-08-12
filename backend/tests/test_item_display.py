@@ -13,12 +13,14 @@ module_spec.loader.exec_module(item_display)
 
 
 class ItemDisplayTests(unittest.TestCase):
-    def test_converts_enuri_rate_to_percentage(self):
+    def test_displays_enuri_rate_as_percentage_without_scaling(self):
         cases = (
-            ("EMP_ENURI_RT", Decimal("0.1"), "10%"),
-            ("GRP_CMP_ENURI_RT", 0.075, "7.5%"),
+            ("EMP_ENURI_RT", Decimal("5"), "5%"),
+            ("GRP_CMP_ENURI_RT", 0.1, "0.1%"),
             ("GNRL_MEM_ENURI_RT", "0", "0%"),
-            ("JSMN_BLK_ENURI_RT", "1", "100%"),
+            ("JSMN_BLK_ENURI_RT", "10.500", "10.5%"),
+            ("TCP_PNT_ACM_RT", "5", "5%"),
+            ("HCARD_PNT_ACM_RT", "0.5", "0.5%"),
         )
         for field_name, value, expected in cases:
             with self.subTest(field_name=field_name, value=value):
@@ -36,6 +38,21 @@ class ItemDisplayTests(unittest.TestCase):
             item_display.format_product_result_value("EMP_ENURI_RT", "미설정"),
             "미설정",
         )
+
+    def test_formats_item_use_period(self):
+        self.assertEqual(
+            item_display.format_item_use_period("20260801", "2026-08-31"),
+            "2026-08-01 ~ 2026-08-31",
+        )
+        self.assertEqual(
+            item_display.format_item_use_period("20260801", None),
+            "2026-08-01 ~ -",
+        )
+        self.assertEqual(
+            item_display.format_item_use_period("", "20260831"),
+            "- ~ 2026-08-31",
+        )
+        self.assertIsNone(item_display.format_item_use_period(None, None))
 
 
 if __name__ == "__main__":

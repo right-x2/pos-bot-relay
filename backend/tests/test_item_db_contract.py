@@ -39,7 +39,7 @@ db_spec.loader.exec_module(db)
 
 
 class ItemDbContractTests(unittest.TestCase):
-    def test_item_lookup_selects_all_enuri_rate_columns(self):
+    def test_item_lookup_selects_display_columns(self):
         with patch.object(db, "_fetch_rows", return_value=[]) as fetch:
             db.fetch_item_master_by_code("8801234567890", "210")
 
@@ -51,6 +51,10 @@ class ItemDbContractTests(unittest.TestCase):
             "JSMN_BLK_ENURI_RT",
             "UCARD_PNT_ACM_RT",
             "OUTLET_PNT_ACM_RT",
+            "TCP_PNT_ACM_RT",
+            "HCARD_PNT_ACM_RT",
+            "USE_START_DT",
+            "USE_END_DT",
         ):
             self.assertIn(column, sql)
         self.assertEqual(params, ("210", "8801234567890"))
