@@ -50,7 +50,11 @@ from app.rag import (
 )
 from app.item_diagnostics import build_item_diagnosis
 from app.faq_categories import FAQ_CATEGORY_NAMES, normalize_faq_category
-from app.family_sale import fetch_family_sale_comparison, normalize_family_sale_period
+from app.family_sale import (
+    fetch_family_sale_comparison,
+    fetch_family_sale_single,
+    normalize_family_sale_period,
+)
 from app.refund_tools import normalize_refund_key
 
 # Use Uvicorn's configured logger so INFO diagnostics are visible in the
@@ -1548,7 +1552,12 @@ def family_sale_sales_tool(req: FamilySaleSalesRequest, request: Request):
             start=period["current_start"].isoformat(timespec="minutes"),
             end=period["display_end"].isoformat(timespec="minutes"),
         )
-        comparison = fetch_family_sale_comparison(period)
+        comparison_enabled = period["search_type"] != "single"
+        comparison = (
+            fetch_family_sale_comparison(period)
+            if comparison_enabled
+            else fetch_family_sale_single(period)
+        )
         all_rows = comparison["rows"]
         total_count = len(all_rows)
         total_pages = math.ceil(total_count / req.pageSize) if total_count else 0
@@ -1571,6 +1580,7 @@ def family_sale_sales_tool(req: FamilySaleSalesRequest, request: Request):
             content={
                 "ok": True,
                 "searchType": period["search_type"],
+                "comparisonEnabled": comparison_enabled,
                 "currentStartDateTime": period["current_start"].isoformat(
                     timespec="seconds"
                 ),
@@ -1582,13 +1592,15 @@ def family_sale_sales_tool(req: FamilySaleSalesRequest, request: Request):
                 ].isoformat(timespec="seconds"),
                 "previousStartDateTime": period["previous_start"].isoformat(
                     timespec="seconds"
-                ),
+                ) if comparison_enabled else None,
                 "previousEndDateTime": period["previous_display_end"].isoformat(
                     timespec="seconds"
-                ),
+                ) if comparison_enabled else None,
                 "comparisonDayOffset": period["comparison_day_offset"],
                 "currentEventStartDate": period["current_event_start_date"],
                 "previousEventStartDate": period["previous_event_start_date"],
+                "posStart": comparison.get("posStart"),
+                "posEnd": comparison.get("posEnd"),
                 "page": req.page,
                 "pageSize": req.pageSize,
                 "totalPosCount": total_count,

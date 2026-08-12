@@ -34,6 +34,7 @@ sys.modules["app.config"] = config_stub
 from app.family_sale import (
     _query_params,
     calculate_change_rate,
+    fetch_family_sale_single,
     normalize_family_sale_period,
 )
 
@@ -100,6 +101,36 @@ class FamilySaleTests(unittest.TestCase):
             period["current_end_exclusive"],
             datetime(2026, 8, 14, 10, 30, 15),
         )
+
+    def test_single_period_paging_preserves_original_end_boundary(self):
+        period = normalize_family_sale_period(
+            "single",
+            "2025-08-14T09:00:00",
+            "2025-08-14T11:01:00",
+            "2025-08-14T11:00:00",
+        )
+        self.assertEqual(
+            period["current_end_exclusive"],
+            datetime(2025, 8, 14, 11, 1),
+        )
+        self.assertEqual(period["display_end"], datetime(2025, 8, 14, 11, 0))
+
+    def test_single_period_uses_previous_event_pos_range(self):
+        from unittest.mock import MagicMock, patch
+
+        period = normalize_family_sale_period(
+            "single",
+            "2025-08-14T09:00",
+            "2025-08-14T11:00",
+        )
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        cursor = connection.cursor.return_value
+        cursor.fetchall.return_value = []
+        with patch("app.family_sale.pyodbc.connect", return_value=connection):
+            result = fetch_family_sale_single(period)
+        self.assertEqual(result["posStart"], "7701")
+        self.assertEqual(result["posEnd"], "7783")
 
     def test_change_rate_and_zero_denominator(self):
         self.assertEqual(calculate_change_rate(Decimal("120"), Decimal("100")), 20.0)

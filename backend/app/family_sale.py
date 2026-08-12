@@ -76,12 +76,21 @@ def normalize_family_sale_period(
         start = current_now - timedelta(hours=1)
         end_exclusive = current_now
         display_end = current_now
-    elif normalized_type == "custom":
+    elif normalized_type in {"custom", "single"}:
         start = _parse_custom_datetime(start_datetime, "startDateTime")
-        display_end = _parse_custom_datetime(end_datetime, "endDateTime")
-        if start > display_end:
-            raise ValueError("startDateTime must not be after endDateTime")
-        end_exclusive = display_end + timedelta(minutes=1)
+        if normalized_type == "single" and display_end_datetime:
+            end_exclusive = _parse_custom_datetime(end_datetime, "endDateTime")
+            display_end = _parse_custom_datetime(
+                display_end_datetime,
+                "displayEndDateTime",
+            )
+            if start >= end_exclusive:
+                raise ValueError("startDateTime must be before endDateTime")
+        else:
+            display_end = _parse_custom_datetime(end_datetime, "endDateTime")
+            if start > display_end:
+                raise ValueError("startDateTime must not be after endDateTime")
+            end_exclusive = display_end + timedelta(minutes=1)
     elif normalized_type == "fixed":
         start = _parse_custom_datetime(start_datetime, "startDateTime")
         end_exclusive = _parse_custom_datetime(end_datetime, "endDateTime")
@@ -95,7 +104,7 @@ def normalize_family_sale_period(
         if display_end < start or display_end > end_exclusive:
             raise ValueError("displayEndDateTime is outside the query period")
     else:
-        raise ValueError("searchType must be recent_hour, custom or fixed")
+        raise ValueError("searchType must be recent_hour, custom, single or fixed")
 
     if display_end - start > MAX_CUSTOM_RANGE:
         raise ValueError("조회기간은 31일 이하여야 합니다.")
@@ -267,4 +276,51 @@ def fetch_family_sale_comparison(period: dict[str, Any]) -> dict[str, Any]:
     return {
         "rows": rows,
         "total": _comparison_row("TOTAL", current_total, previous_total),
+    }
+
+
+def fetch_family_sale_single(period: dict[str, Any]) -> dict[str, Any]:
+    current_event_start = _event_date(
+        settings.FAMILY_SALE_CURRENT_EVENT_START_DATE,
+        "FAMILY_SALE_CURRENT_EVENT_START_DATE",
+    )
+    if period["current_start"].date() < current_event_start.date():
+        pos_start = settings.FAMILY_SALE_PREVIOUS_POS_START
+        pos_end = settings.FAMILY_SALE_PREVIOUS_POS_END
+    else:
+        pos_start = settings.FAMILY_SALE_CURRENT_POS_START
+        pos_end = settings.FAMILY_SALE_CURRENT_POS_END
+
+    with pyodbc.connect(get_family_sale_conn_str()) as conn:
+        conn.timeout = settings.FAMILY_SALE_QUERY_TIMEOUT_SEC
+        cursor = conn.cursor()
+        single_rows = _fetch_sales_rows(
+            cursor,
+            period["current_start"],
+            period["current_end_exclusive"],
+            pos_start,
+            pos_end,
+        )
+
+    empty = {"sales": Decimal("0"), "enuri": Decimal("0"), "count": 0}
+    rows = [
+        _comparison_row(pos_no, single_rows[pos_no], empty)
+        for pos_no in sorted(single_rows)
+    ]
+    total = {
+        "sales": sum(
+            (_number(row["sales"]) for row in single_rows.values()),
+            Decimal("0"),
+        ),
+        "enuri": sum(
+            (_number(row["enuri"]) for row in single_rows.values()),
+            Decimal("0"),
+        ),
+        "count": sum(int(row["count"]) for row in single_rows.values()),
+    }
+    return {
+        "rows": rows,
+        "total": _comparison_row("TOTAL", total, empty),
+        "posStart": pos_start,
+        "posEnd": pos_end,
     }

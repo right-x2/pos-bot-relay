@@ -1390,9 +1390,18 @@ def create_family_sale_form_card() -> Attachment:
                 },
                 {
                     "type": "Action.Submit",
-                    "title": "직접 기간 조회",
+                    "title": "직접 기간 조회(전년도 비교)",
                     "data": {
                         "action": "family_sale_custom",
+                        "tool": TOOL_FAMILY_SALE_SALES,
+                        "page": 1,
+                    },
+                },
+                {
+                    "type": "Action.Submit",
+                    "title": "테스트 단일 기간 조회(비교 없음)",
+                    "data": {
+                        "action": "family_sale_single",
                         "tool": TOOL_FAMILY_SALE_SALES,
                         "page": 1,
                     },
@@ -1434,34 +1443,52 @@ def create_family_sale_result_card(response_json: dict) -> Attachment:
     )
     previous_start = str(response_json.get("previousStartDateTime") or "-")
     previous_end = str(response_json.get("previousEndDateTime") or "-")
+    comparison_enabled = response_json.get("comparisonEnabled") is not False
     current_event_start = str(response_json.get("currentEventStartDate") or "-")
     previous_event_start = str(response_json.get("previousEventStartDate") or "-")
 
     body = [
         {
             "type": "TextBlock",
-            "text": "2026 한섬패밀리세일 매출조회 결과",
+            "text": (
+                "2026 한섬패밀리세일 매출 비교 결과"
+                if comparison_enabled
+                else "한섬패밀리세일 단일 기간 조회 결과"
+            ),
             "weight": "Bolder",
             "size": "Medium",
             "wrap": True,
         },
         {
             "type": "FactSet",
-            "facts": [
-                {"title": "올해 조회기간", "value": f"{current_start} ~ {current_end}"},
-                {"title": "전년도 비교기간", "value": f"{previous_start} ~ {previous_end}"},
-                {
-                    "title": "행사 1일차 기준",
-                    "value": f"올해 {current_event_start} / 전년도 {previous_event_start}",
-                },
-                {"title": "올해 총매출", "value": format_amount(total.get("currentSales"))},
-                {"title": "전년도 총매출", "value": format_amount(total.get("previousSales"))},
-                {"title": "증감률", "value": format_change_rate(total.get("salesChangeRate"))},
-                {"title": "올해 총에누리", "value": format_amount(total.get("currentEnuri"))},
-                {"title": "전년도 총에누리", "value": format_amount(total.get("previousEnuri"))},
-                {"title": "올해 거래수", "value": f"{int(total.get('currentCount') or 0):,}건"},
-                {"title": "전년도 거래수", "value": f"{int(total.get('previousCount') or 0):,}건"},
-            ],
+            "facts": (
+                [
+                    {"title": "올해 조회기간", "value": f"{current_start} ~ {current_end}"},
+                    {"title": "전년도 비교기간", "value": f"{previous_start} ~ {previous_end}"},
+                    {
+                        "title": "행사 1일차 기준",
+                        "value": f"올해 {current_event_start} / 전년도 {previous_event_start}",
+                    },
+                    {"title": "올해 총매출", "value": format_amount(total.get("currentSales"))},
+                    {"title": "전년도 총매출", "value": format_amount(total.get("previousSales"))},
+                    {"title": "증감률", "value": format_change_rate(total.get("salesChangeRate"))},
+                    {"title": "올해 총에누리", "value": format_amount(total.get("currentEnuri"))},
+                    {"title": "전년도 총에누리", "value": format_amount(total.get("previousEnuri"))},
+                    {"title": "올해 거래수", "value": f"{int(total.get('currentCount') or 0):,}건"},
+                    {"title": "전년도 거래수", "value": f"{int(total.get('previousCount') or 0):,}건"},
+                ]
+                if comparison_enabled
+                else [
+                    {"title": "조회기간", "value": f"{current_start} ~ {current_end}"},
+                    {
+                        "title": "조회 POS",
+                        "value": f"{response_json.get('posStart') or '-'} ~ {response_json.get('posEnd') or '-'}",
+                    },
+                    {"title": "총매출", "value": format_amount(total.get("currentSales"))},
+                    {"title": "총에누리", "value": format_amount(total.get("currentEnuri"))},
+                    {"title": "거래수", "value": f"{int(total.get('currentCount') or 0):,}건"},
+                ]
+            ),
         },
     ]
 
@@ -1481,15 +1508,23 @@ def create_family_sale_result_card(response_json: dict) -> Attachment:
                         },
                         {
                             "type": "FactSet",
-                            "facts": [
-                                {"title": "올해 매출", "value": format_amount(row.get("currentSales"))},
-                                {"title": "전년도 매출", "value": format_amount(row.get("previousSales"))},
-                                {"title": "매출 증감률", "value": format_change_rate(row.get("salesChangeRate"))},
-                                {"title": "올해 에누리", "value": format_amount(row.get("currentEnuri"))},
-                                {"title": "전년도 에누리", "value": format_amount(row.get("previousEnuri"))},
-                                {"title": "올해 거래수", "value": f"{int(row.get('currentCount') or 0):,}건"},
-                                {"title": "전년도 거래수", "value": f"{int(row.get('previousCount') or 0):,}건"},
-                            ],
+                            "facts": (
+                                [
+                                    {"title": "올해 매출", "value": format_amount(row.get("currentSales"))},
+                                    {"title": "전년도 매출", "value": format_amount(row.get("previousSales"))},
+                                    {"title": "매출 증감률", "value": format_change_rate(row.get("salesChangeRate"))},
+                                    {"title": "올해 에누리", "value": format_amount(row.get("currentEnuri"))},
+                                    {"title": "전년도 에누리", "value": format_amount(row.get("previousEnuri"))},
+                                    {"title": "올해 거래수", "value": f"{int(row.get('currentCount') or 0):,}건"},
+                                    {"title": "전년도 거래수", "value": f"{int(row.get('previousCount') or 0):,}건"},
+                                ]
+                                if comparison_enabled
+                                else [
+                                    {"title": "매출", "value": format_amount(row.get("currentSales"))},
+                                    {"title": "에누리", "value": format_amount(row.get("currentEnuri"))},
+                                    {"title": "거래수", "value": f"{int(row.get('currentCount') or 0):,}건"},
+                                ]
+                            ),
                         },
                     ],
                 }
@@ -1507,7 +1542,7 @@ def create_family_sale_result_card(response_json: dict) -> Attachment:
     common_data = {
         "tool": TOOL_FAMILY_SALE_SALES,
         # 결과 페이지 이동 시 최초 조회기간을 고정한다.
-        "search_type": "fixed",
+        "search_type": "fixed" if comparison_enabled else "single",
         "start_datetime": current_start,
         "end_datetime": current_end_exclusive,
         "display_end_datetime": current_end,
@@ -3789,7 +3824,7 @@ class RelayBot(ActivityHandler):
             submit_value.get("display_end_datetime", "") or ""
         ).strip()
 
-        if search_type == "custom" and not start_datetime:
+        if search_type in {"custom", "single"} and not start_datetime:
             start_date = str(submit_value.get("start_date", "") or "").strip()
             start_time = str(submit_value.get("start_time", "") or "").strip()
             end_date = str(submit_value.get("end_date", "") or "").strip()
@@ -3800,7 +3835,7 @@ class RelayBot(ActivityHandler):
             start_datetime = f"{start_date}T{start_time}"
             end_datetime = f"{end_date}T{end_time}"
 
-        if search_type in {"custom", "fixed"}:
+        if search_type in {"custom", "single", "fixed"}:
             start_value = None
             end_value = None
             for datetime_format in ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S"):
@@ -4820,6 +4855,14 @@ class RelayBot(ActivityHandler):
                 turn_context,
                 submit_value,
                 search_type="custom",
+            )
+            return
+
+        if action == "family_sale_single":
+            await self.handle_family_sale_submit(
+                turn_context,
+                submit_value,
+                search_type="single",
             )
             return
 

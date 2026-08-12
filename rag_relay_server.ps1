@@ -435,8 +435,8 @@ try {
                 $TargetUrl = $FamilySaleUrl
 
                 $SearchType = ([string]$Incoming.searchType).Trim()
-                if (($SearchType -ne "recent_hour") -and ($SearchType -ne "custom") -and ($SearchType -ne "fixed")) {
-                    throw "searchType must be recent_hour, custom or fixed"
+                if (($SearchType -ne "recent_hour") -and ($SearchType -ne "custom") -and ($SearchType -ne "single") -and ($SearchType -ne "fixed")) {
+                    throw "searchType must be recent_hour, custom, single or fixed"
                 }
 
                 $Page = 1
@@ -464,7 +464,7 @@ try {
                     page = $Page
                     pageSize = $PageSize
                 }
-                if (($SearchType -eq "custom") -or ($SearchType -eq "fixed")) {
+                if (($SearchType -eq "custom") -or ($SearchType -eq "single") -or ($SearchType -eq "fixed")) {
                     $StartDateTime = ([string]$Incoming.startDateTime).Trim()
                     $EndDateTime = ([string]$Incoming.endDateTime).Trim()
                     if ([string]::IsNullOrWhiteSpace($StartDateTime)) {
@@ -475,7 +475,7 @@ try {
                     }
                     $ForwardPayload["startDateTime"] = $StartDateTime
                     $ForwardPayload["endDateTime"] = $EndDateTime
-                    if ($SearchType -eq "fixed") {
+                    if (($SearchType -eq "fixed") -or ($SearchType -eq "single")) {
                         $DisplayEndDateTime = ([string]$Incoming.displayEndDateTime).Trim()
                         if (-not [string]::IsNullOrWhiteSpace($DisplayEndDateTime)) {
                             $ForwardPayload["displayEndDateTime"] = $DisplayEndDateTime

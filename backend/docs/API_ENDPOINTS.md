@@ -131,6 +131,7 @@
 
 - `recent_hour`: 서버의 현재 한국시간 기준 최근 1시간 조회
 - `custom`: `YYYY-MM-DDTHH:MM` 또는 `YYYY-MM-DDTHH:MM:SS` 형식의 시작·종료 일시 조회
+- `single`: 테스트용 단일 기간 조회. 전년도 비교 없이 선택 기간의 매출만 반환한다.
 - `fixed`: 조회 결과의 페이지 이동 시 동일한 초 단위 조회 경계를 유지하기 위한 내부용 값
 - 종료 시·분은 해당 분 전체를 포함한다.
 - 행사 일차를 맞춰 비교한다. 기본 1일차는 올해 `2026-08-13`, 전년도 `2025-08-14`이며 각각 `FAMILY_SALE_CURRENT_EVENT_START_DATE`, `FAMILY_SALE_PREVIOUS_EVENT_START_DATE`로 변경할 수 있다.
