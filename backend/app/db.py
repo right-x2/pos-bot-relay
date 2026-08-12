@@ -331,6 +331,12 @@ def fetch_item_master_by_code(item_cd: str, store_cd: str = TEST_STORE_CD) -> di
         VEN_CD,
         PC_CD,
         CONER_CD,
+        EMP_ENURI_RT,
+        GRP_CMP_ENURI_RT,
+        GNRL_MEM_ENURI_RT,
+        JSMN_BLK_ENURI_RT,
+        UCARD_PNT_ACM_RT,
+        OUTLET_PNT_ACM_RT,
         USE_YN
     FROM HDMST..ITM_ITEM_MST
     WHERE STORE_CD = ?

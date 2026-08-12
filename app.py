@@ -13,6 +13,7 @@ from image_forwarder import (
     download_teams_image_attachment,
     forward_teams_image,
 )
+from item_display import format_product_result_value
 from item_search import search_items
 from faq_questions import fetch_top_faq_questions
 from pattern_search import search_patterns
@@ -84,6 +85,12 @@ ITEM_RESULT_FIELDS = (
     ("VEN_CD", "거래처코드"),
     ("PC_CD", "PC코드"),
     ("CORNER_CD", "코너코드"),
+    ("EMP_ENURI_RT", "직원에누리"),
+    ("GRP_CMP_ENURI_RT", "그룹사에누리"),
+    ("GNRL_MEM_ENURI_RT", "일반 에누리"),
+    ("JSMN_BLK_ENURI_RT", "자스민블랙 에누리"),
+    ("UCARD_PNT_ACM_RT", "백화점 임직원 에누리(11카드 20%)"),
+    ("OUTLET_PNT_ACM_RT", "협력사 에누리(13카드 10%)"),
     ("USE_YN", "사용여부"),
 )
 
@@ -709,8 +716,9 @@ def create_product_search_result_card(
                 facts.append(
                     {
                         "title": field_title,
-                        "value": str(
-                            result[field_name]
+                        "value": format_product_result_value(
+                            field_name,
+                            result[field_name],
                         )[:1000],
                     }
                 )
