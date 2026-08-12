@@ -22,6 +22,7 @@
 | POST | `/tools/pattern_update` | POS 패턴 상세값 수정용 도구 API |
 | POST | `/tools/refund_status` | 원거래 키 기준 반품 진행 상태 및 진행 POS 조회 |
 | POST | `/tools/refund_cancel` | 원거래 키 기준 반품 진행 데이터 삭제 |
+| POST | `/tools/family_sale_sales` | 2026 한섬패밀리세일 올해/전년도 POS별 매출 비교 |
 
 ## 2. 공통 사항
 
@@ -120,6 +121,28 @@
   "ok": true,
   "deleted": 1,
   "message": "반품 진행이 취소되었습니다."
+}
+```
+
+### 2026 한섬패밀리세일 매출조회
+
+`/tools/family_sale_sales`는 별도 SQL Server(`10.28.200.5:1433`)에 접속하며,
+계정은 `FAMILY_SALE_DB_USER`와 `FAMILY_SALE_DB_PASSWORD` 환경변수로만 받는다.
+
+- `recent_hour`: 서버의 현재 한국시간 기준 최근 1시간 조회
+- `custom`: `YYYY-MM-DDTHH:MM` 또는 `YYYY-MM-DDTHH:MM:SS` 형식의 시작·종료 일시 조회
+- `fixed`: 조회 결과의 페이지 이동 시 동일한 초 단위 조회 경계를 유지하기 위한 내부용 값
+- 종료 시·분은 해당 분 전체를 포함한다.
+- 행사 일차를 맞춰 비교한다. 기본 1일차는 올해 `2026-08-13`, 전년도 `2025-08-14`이며 각각 `FAMILY_SALE_CURRENT_EVENT_START_DATE`, `FAMILY_SALE_PREVIOUS_EVENT_START_DATE`로 변경할 수 있다.
+- 증감률은 `(올해 매출 - 전년도 매출) / |전년도 매출| * 100`이다. 전년도 매출이 0원이고 올해 매출이 있으면 비율은 `null`로 반환한다.
+
+```json
+{
+  "searchType": "custom",
+  "startDateTime": "2026-08-14T09:00",
+  "endDateTime": "2026-08-14T10:59",
+  "page": 1,
+  "pageSize": 10
 }
 ```
 

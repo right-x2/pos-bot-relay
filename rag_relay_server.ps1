@@ -11,6 +11,7 @@ $PatternSearchUrl = "http://10.103.201.164:8000/tools/pattern_lookup"
 $PatternUpdateUrl = "http://10.103.201.164:8000/tools/pattern_update"
 $RefundStatusUrl = "http://10.103.201.164:8000/tools/refund_status"
 $RefundCancelUrl = "http://10.103.201.164:8000/tools/refund_cancel"
+$FamilySaleUrl = "http://10.103.201.164:8000/tools/family_sale_sales"
 $TopFaqQuestionsUrl = "http://10.103.201.164:8000/api/faqs/top-questions"
 
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -116,6 +117,7 @@ try {
     Write-Host "PtnUpdate: $PatternUpdateUrl"
     Write-Host "Refund   : $RefundStatusUrl"
     Write-Host "RfndCancel: $RefundCancelUrl"
+    Write-Host "FamilySale: $FamilySaleUrl"
     Write-Host "Top FAQ  : $TopFaqQuestionsUrl"
     Write-Host "Stop     : Ctrl+C"
     Write-Host "============================================================"
@@ -151,6 +153,7 @@ try {
                     patternUpdateUrl = $PatternUpdateUrl
                     refundStatusUrl = $RefundStatusUrl
                     refundCancelUrl = $RefundCancelUrl
+                    familySaleUrl = $FamilySaleUrl
                     topFaqQuestionsUrl = $TopFaqQuestionsUrl
                     serverTime = $Now
                 } | ConvertTo-Json -Depth 10 -Compress
@@ -427,6 +430,60 @@ try {
                     posNo = $PosNo
                     dealNo = $DealNo
                 } | ConvertTo-Json -Depth 20 -Compress
+            }
+            elseif ($Path -eq "/tools/family_sale_sales") {
+                $TargetUrl = $FamilySaleUrl
+
+                $SearchType = ([string]$Incoming.searchType).Trim()
+                if (($SearchType -ne "recent_hour") -and ($SearchType -ne "custom") -and ($SearchType -ne "fixed")) {
+                    throw "searchType must be recent_hour, custom or fixed"
+                }
+
+                $Page = 1
+                if ($null -ne $Incoming.page) {
+                    if (-not [int]::TryParse([string]$Incoming.page, [ref]$Page)) {
+                        throw "page must be an integer"
+                    }
+                }
+                if ($Page -lt 1) {
+                    throw "page must be 1 or greater"
+                }
+
+                $PageSize = 10
+                if ($null -ne $Incoming.pageSize) {
+                    if (-not [int]::TryParse([string]$Incoming.pageSize, [ref]$PageSize)) {
+                        throw "pageSize must be an integer"
+                    }
+                }
+                if (($PageSize -lt 1) -or ($PageSize -gt 20)) {
+                    throw "pageSize must be between 1 and 20"
+                }
+
+                $ForwardPayload = [ordered]@{
+                    searchType = $SearchType
+                    page = $Page
+                    pageSize = $PageSize
+                }
+                if (($SearchType -eq "custom") -or ($SearchType -eq "fixed")) {
+                    $StartDateTime = ([string]$Incoming.startDateTime).Trim()
+                    $EndDateTime = ([string]$Incoming.endDateTime).Trim()
+                    if ([string]::IsNullOrWhiteSpace($StartDateTime)) {
+                        throw "Missing startDateTime"
+                    }
+                    if ([string]::IsNullOrWhiteSpace($EndDateTime)) {
+                        throw "Missing endDateTime"
+                    }
+                    $ForwardPayload["startDateTime"] = $StartDateTime
+                    $ForwardPayload["endDateTime"] = $EndDateTime
+                    if ($SearchType -eq "fixed") {
+                        $DisplayEndDateTime = ([string]$Incoming.displayEndDateTime).Trim()
+                        if (-not [string]::IsNullOrWhiteSpace($DisplayEndDateTime)) {
+                            $ForwardPayload["displayEndDateTime"] = $DisplayEndDateTime
+                        }
+                    }
+                }
+
+                $ForwardBody = $ForwardPayload | ConvertTo-Json -Depth 20 -Compress
             }
             elseif ($Path -eq "/api/logs/help-yn") {
                 $TargetUrl = $FeedbackUrl

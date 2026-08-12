@@ -50,6 +50,7 @@ from app.rag import (
 )
 from app.item_diagnostics import build_item_diagnosis
 from app.faq_categories import FAQ_CATEGORY_NAMES, normalize_faq_category
+from app.family_sale import fetch_family_sale_comparison, normalize_family_sale_period
 from app.refund_tools import normalize_refund_key
 
 # Use Uvicorn's configured logger so INFO diagnostics are visible in the
@@ -286,6 +287,27 @@ class RefundStatusRequest(BaseModel):
                 "saleDate": "20260812",
                 "posNo": "1111",
                 "dealNo": "000123",
+            }
+        }
+    )
+
+
+class FamilySaleSalesRequest(BaseModel):
+    searchType: str
+    startDateTime: str | None = None
+    endDateTime: str | None = None
+    displayEndDateTime: str | None = None
+    page: int = Field(default=1, ge=1)
+    pageSize: int = Field(default=10, ge=1, le=20)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "searchType": "custom",
+                "startDateTime": "2026-08-14T00:00",
+                "endDateTime": "2026-08-14T10:59",
+                "page": 1,
+                "pageSize": 10,
             }
         }
     )
@@ -1490,6 +1512,106 @@ def refund_status_tool(req: RefundStatusRequest, request: Request):
         return JSONResponse(
             status_code=500,
             content={"ok": False, "message": "반품 상태조회 중 오류가 발생했습니다."},
+            media_type="application/json; charset=utf-8",
+        )
+
+
+@app.post("/tools/family_sale_sales")
+def family_sale_sales_tool(req: FamilySaleSalesRequest, request: Request):
+    try:
+        period = normalize_family_sale_period(
+            req.searchType,
+            req.startDateTime,
+            req.endDateTime,
+            req.displayEndDateTime,
+        )
+    except ValueError as error:
+        _log_api_step(request, "family_sale_validation_failed", message=str(error))
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "message": str(error)},
+            media_type="application/json; charset=utf-8",
+        )
+    except RuntimeError as error:
+        _log_api_step(request, "family_sale_configuration_error", message=str(error))
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "message": str(error)},
+            media_type="application/json; charset=utf-8",
+        )
+
+    try:
+        _log_api_step(
+            request,
+            "family_sale_query_start",
+            search_type=period["search_type"],
+            start=period["current_start"].isoformat(timespec="minutes"),
+            end=period["display_end"].isoformat(timespec="minutes"),
+        )
+        comparison = fetch_family_sale_comparison(period)
+        all_rows = comparison["rows"]
+        total_count = len(all_rows)
+        total_pages = math.ceil(total_count / req.pageSize) if total_count else 0
+        if total_pages and req.page > total_pages:
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "message": "page exceeds totalPages"},
+                media_type="application/json; charset=utf-8",
+            )
+
+        offset = (req.page - 1) * req.pageSize
+        rows = all_rows[offset : offset + req.pageSize]
+        _log_api_step(
+            request,
+            "family_sale_query_done",
+            total_pos_count=total_count,
+            page=req.page,
+        )
+        return JSONResponse(
+            content={
+                "ok": True,
+                "searchType": period["search_type"],
+                "currentStartDateTime": period["current_start"].isoformat(
+                    timespec="seconds"
+                ),
+                "currentEndDateTime": period["display_end"].isoformat(
+                    timespec="seconds"
+                ),
+                "currentEndExclusiveDateTime": period[
+                    "current_end_exclusive"
+                ].isoformat(timespec="seconds"),
+                "previousStartDateTime": period["previous_start"].isoformat(
+                    timespec="seconds"
+                ),
+                "previousEndDateTime": period["previous_display_end"].isoformat(
+                    timespec="seconds"
+                ),
+                "comparisonDayOffset": period["comparison_day_offset"],
+                "currentEventStartDate": period["current_event_start_date"],
+                "previousEventStartDate": period["previous_event_start_date"],
+                "page": req.page,
+                "pageSize": req.pageSize,
+                "totalPosCount": total_count,
+                "totalPages": total_pages,
+                "hasPrevious": req.page > 1,
+                "hasNext": total_pages > 0 and req.page < total_pages,
+                "total": comparison["total"],
+                "rows": rows,
+            },
+            media_type="application/json; charset=utf-8",
+        )
+    except RuntimeError as error:
+        _log_api_step(request, "family_sale_configuration_error", message=str(error))
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "message": str(error)},
+            media_type="application/json; charset=utf-8",
+        )
+    except Exception:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "message": "패밀리세일 매출조회 중 오류가 발생했습니다."},
             media_type="application/json; charset=utf-8",
         )
 

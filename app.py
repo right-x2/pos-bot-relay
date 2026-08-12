@@ -13,6 +13,8 @@ from image_forwarder import (
     download_teams_image_attachment,
     forward_teams_image,
 )
+from family_sale import request_family_sale_sales
+from family_sale_display import format_amount, format_change_rate
 from item_display import format_item_use_period, format_product_result_value
 from item_search import search_items
 from faq_questions import fetch_top_faq_questions
@@ -62,6 +64,7 @@ TOOL_SINGLE_PRODUCT_LOOKUP = "single_product_lookup"
 TOOL_PATTERN_SEARCH = "pattern_search"
 TOOL_PATTERN_UPDATE = "pattern_update"
 TOOL_REFUND_STATUS = "refund_status"
+TOOL_FAMILY_SALE_SALES = "family_sale_sales"
 TOOL_GENERAL_CHAT = "general_chat"
 
 TOOL_TITLES = {
@@ -72,6 +75,7 @@ TOOL_TITLES = {
     TOOL_PATTERN_SEARCH: "패턴 조회",
     TOOL_PATTERN_UPDATE: "패턴 수정",
     TOOL_REFUND_STATUS: "반품 상태조회",
+    TOOL_FAMILY_SALE_SALES: "2026 한섬패밀리세일 매출조회",
     TOOL_GENERAL_CHAT: "일반 질문",
 }
 
@@ -166,6 +170,11 @@ class Config:
     REFUND_CANCEL_API_URL = os.getenv(
         "REFUND_CANCEL_API_URL",
         "http://123.111.174.78:30002/tools/refund_cancel",
+    )
+
+    FAMILY_SALE_API_URL = os.getenv(
+        "FAMILY_SALE_API_URL",
+        "http://123.111.174.78:30002/tools/family_sale_sales",
     )
 
     TOP_FAQ_QUESTIONS_API_URL = os.getenv(
@@ -392,6 +401,14 @@ def create_tool_menu_card() -> Attachment:
                 "data": {
                     "action": "tool_select",
                     "tool": TOOL_REFUND_STATUS,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "2026 한섬패밀리세일 매출조회",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_FAMILY_SALE_SALES,
                 },
             },
             {
@@ -750,6 +767,11 @@ def create_product_search_result_card(
         diagnosis_facts = []
         for check in diagnosis_checks:
             if not isinstance(check, dict):
+                continue
+            if (
+                tool_name == TOOL_PRODUCT_LOOKUP
+                and str(check.get("key", "")) == "usePeriod"
+            ):
                 continue
             label = str(check.get("label", "확인 항목") or "확인 항목")
             value = str(check.get("value", "-") or "-")
@@ -1280,6 +1302,261 @@ def create_refund_cancel_result_card(response_json: dict) -> Attachment:
                     "data": {"action": "tool_menu"},
                 },
             ],
+        }
+    )
+
+
+def create_family_sale_form_card() -> Attachment:
+    now = datetime.now(KST)
+    today = now.strftime("%Y-%m-%d")
+    current_time = now.strftime("%H:%M")
+    return adaptive_attachment(
+        {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.3",
+            "body": [
+                {
+                    "type": "TextBlock",
+                    "text": "2026 한섬패밀리세일 매출조회",
+                    "weight": "Bolder",
+                    "size": "Medium",
+                    "wrap": True,
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "최근 1시간을 바로 조회하거나 직접 조회기간을 입력하세요.",
+                    "isSubtle": True,
+                    "wrap": True,
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "직접 조회기간",
+                    "weight": "Bolder",
+                    "spacing": "Medium",
+                },
+                {
+                    "type": "ColumnSet",
+                    "columns": [
+                        {
+                            "type": "Column",
+                            "width": "stretch",
+                            "items": [
+                                {
+                                    "type": "Input.Date",
+                                    "id": "start_date",
+                                    "label": "시작일",
+                                    "value": today,
+                                },
+                                {
+                                    "type": "Input.Time",
+                                    "id": "start_time",
+                                    "label": "시작시간",
+                                    "value": "00:00",
+                                },
+                            ],
+                        },
+                        {
+                            "type": "Column",
+                            "width": "stretch",
+                            "items": [
+                                {
+                                    "type": "Input.Date",
+                                    "id": "end_date",
+                                    "label": "종료일",
+                                    "value": today,
+                                },
+                                {
+                                    "type": "Input.Time",
+                                    "id": "end_time",
+                                    "label": "종료시간",
+                                    "value": current_time,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            "actions": [
+                {
+                    "type": "Action.Submit",
+                    "title": "최근 1시간 조회",
+                    "style": "positive",
+                    "associatedInputs": "none",
+                    "data": {
+                        "action": "family_sale_recent_hour",
+                        "tool": TOOL_FAMILY_SALE_SALES,
+                    },
+                },
+                {
+                    "type": "Action.Submit",
+                    "title": "직접 기간 조회",
+                    "data": {
+                        "action": "family_sale_custom",
+                        "tool": TOOL_FAMILY_SALE_SALES,
+                        "page": 1,
+                    },
+                },
+                {
+                    "type": "Action.Submit",
+                    "title": "도구 메뉴",
+                    "data": {"action": "tool_menu"},
+                },
+            ],
+        }
+    )
+
+
+def create_family_sale_result_card(response_json: dict) -> Attachment:
+    rows = response_json.get("rows")
+    if not isinstance(rows, list):
+        rows = []
+    total = response_json.get("total")
+    if not isinstance(total, dict):
+        total = {}
+
+    try:
+        page = max(int(response_json.get("page", 1) or 1), 1)
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = max(int(response_json.get("pageSize", 10) or 10), 1)
+    except (TypeError, ValueError):
+        page_size = 10
+    try:
+        total_pages = max(int(response_json.get("totalPages", 0) or 0), 0)
+    except (TypeError, ValueError):
+        total_pages = 0
+    current_start = str(response_json.get("currentStartDateTime") or "-")
+    current_end = str(response_json.get("currentEndDateTime") or "-")
+    current_end_exclusive = str(
+        response_json.get("currentEndExclusiveDateTime") or current_end
+    )
+    previous_start = str(response_json.get("previousStartDateTime") or "-")
+    previous_end = str(response_json.get("previousEndDateTime") or "-")
+    current_event_start = str(response_json.get("currentEventStartDate") or "-")
+    previous_event_start = str(response_json.get("previousEventStartDate") or "-")
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": "2026 한섬패밀리세일 매출조회 결과",
+            "weight": "Bolder",
+            "size": "Medium",
+            "wrap": True,
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "올해 조회기간", "value": f"{current_start} ~ {current_end}"},
+                {"title": "전년도 비교기간", "value": f"{previous_start} ~ {previous_end}"},
+                {
+                    "title": "행사 1일차 기준",
+                    "value": f"올해 {current_event_start} / 전년도 {previous_event_start}",
+                },
+                {"title": "올해 총매출", "value": format_amount(total.get("currentSales"))},
+                {"title": "전년도 총매출", "value": format_amount(total.get("previousSales"))},
+                {"title": "증감률", "value": format_change_rate(total.get("salesChangeRate"))},
+                {"title": "올해 총에누리", "value": format_amount(total.get("currentEnuri"))},
+                {"title": "전년도 총에누리", "value": format_amount(total.get("previousEnuri"))},
+                {"title": "올해 거래수", "value": f"{int(total.get('currentCount') or 0):,}건"},
+                {"title": "전년도 거래수", "value": f"{int(total.get('previousCount') or 0):,}건"},
+            ],
+        },
+    ]
+
+    if rows:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            body.append(
+                {
+                    "type": "Container",
+                    "separator": True,
+                    "items": [
+                        {
+                            "type": "TextBlock",
+                            "text": f"POS {str(row.get('posNo') or '-')}",
+                            "weight": "Bolder",
+                        },
+                        {
+                            "type": "FactSet",
+                            "facts": [
+                                {"title": "올해 매출", "value": format_amount(row.get("currentSales"))},
+                                {"title": "전년도 매출", "value": format_amount(row.get("previousSales"))},
+                                {"title": "매출 증감률", "value": format_change_rate(row.get("salesChangeRate"))},
+                                {"title": "올해 에누리", "value": format_amount(row.get("currentEnuri"))},
+                                {"title": "전년도 에누리", "value": format_amount(row.get("previousEnuri"))},
+                                {"title": "올해 거래수", "value": f"{int(row.get('currentCount') or 0):,}건"},
+                                {"title": "전년도 거래수", "value": f"{int(row.get('previousCount') or 0):,}건"},
+                            ],
+                        },
+                    ],
+                }
+            )
+    else:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": "조회기간에 매출 데이터가 없습니다.",
+                "color": "Warning",
+                "wrap": True,
+            }
+        )
+
+    common_data = {
+        "tool": TOOL_FAMILY_SALE_SALES,
+        # 결과 페이지 이동 시 최초 조회기간을 고정한다.
+        "search_type": "fixed",
+        "start_datetime": current_start,
+        "end_datetime": current_end_exclusive,
+        "display_end_datetime": current_end,
+        "page_size": page_size,
+    }
+    actions = []
+    if bool(response_json.get("hasPrevious")):
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "이전",
+                "data": {"action": "family_sale_page", "page": page - 1, **common_data},
+            }
+        )
+    if bool(response_json.get("hasNext")):
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "다음",
+                "data": {"action": "family_sale_page", "page": page + 1, **common_data},
+            }
+        )
+    if total_pages > 0:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": f"POS 목록 {page} / {total_pages} 페이지",
+                "isSubtle": True,
+                "size": "Small",
+            }
+        )
+    actions.extend(
+        [
+            {
+                "type": "Action.Submit",
+                "title": "다시 조회",
+                "data": {"action": "tool_select", "tool": TOOL_FAMILY_SALE_SALES},
+            },
+            {"type": "Action.Submit", "title": "도구 메뉴", "data": {"action": "tool_menu"}},
+        ]
+    )
+
+    return adaptive_attachment(
+        {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.3",
+            "body": body,
+            "actions": actions,
         }
     )
 
@@ -2652,6 +2929,9 @@ class RelayBot(ActivityHandler):
                 turn_context
             )
             attachment = create_refund_status_form_card()
+        elif tool_name == TOOL_FAMILY_SALE_SALES:
+            self.clear_pending_search_tool(turn_context)
+            attachment = create_family_sale_form_card()
         else:
             await turn_context.send_activity(
                 "올바르지 않은 도구 선택입니다."
@@ -3486,6 +3766,125 @@ class RelayBot(ActivityHandler):
             else create_refund_status_result_card(response_json)
         )
         await self.update_or_send_card(turn_context, attachment)
+
+    async def handle_family_sale_submit(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+        *,
+        search_type: str,
+    ) -> None:
+        try:
+            page = max(int(submit_value.get("page", 1) or 1), 1)
+            page_size = max(
+                min(int(submit_value.get("page_size", 10) or 10), 20),
+                1,
+            )
+        except (TypeError, ValueError):
+            await turn_context.send_activity("페이지 정보가 올바르지 않습니다.")
+            return
+        start_datetime = str(submit_value.get("start_datetime", "") or "").strip()
+        end_datetime = str(submit_value.get("end_datetime", "") or "").strip()
+        display_end_datetime = str(
+            submit_value.get("display_end_datetime", "") or ""
+        ).strip()
+
+        if search_type == "custom" and not start_datetime:
+            start_date = str(submit_value.get("start_date", "") or "").strip()
+            start_time = str(submit_value.get("start_time", "") or "").strip()
+            end_date = str(submit_value.get("end_date", "") or "").strip()
+            end_time = str(submit_value.get("end_time", "") or "").strip()
+            if not all((start_date, start_time, end_date, end_time)):
+                await turn_context.send_activity("시작·종료 일시를 모두 입력해주세요.")
+                return
+            start_datetime = f"{start_date}T{start_time}"
+            end_datetime = f"{end_date}T{end_time}"
+
+        if search_type in {"custom", "fixed"}:
+            start_value = None
+            end_value = None
+            for datetime_format in ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    start_value = datetime.strptime(start_datetime, datetime_format)
+                    end_value = datetime.strptime(end_datetime, datetime_format)
+                    break
+                except ValueError:
+                    continue
+            if start_value is None or end_value is None:
+                await turn_context.send_activity("조회기간 형식을 확인해주세요.")
+                return
+            if start_value > end_value or (
+                search_type == "fixed" and start_value == end_value
+            ):
+                await turn_context.send_activity("시작 일시는 종료 일시보다 늦을 수 없습니다.")
+                return
+            if end_value - start_value > timedelta(days=31):
+                await turn_context.send_activity("조회기간은 최대 31일까지 가능합니다.")
+                return
+
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(keep_typing(turn_context, typing_stop_event))
+        try:
+            api_result = await request_family_sale_sales(
+                target_url=CONFIG.FAMILY_SALE_API_URL,
+                search_type=search_type,
+                start_datetime=start_datetime,
+                end_datetime=end_datetime,
+                display_end_datetime=display_end_datetime,
+                page=page,
+                page_size=page_size,
+            )
+        except Exception as error:
+            print(
+                "[FAMILY SALE API ERROR]"
+                f" type={type(error).__name__} message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
+            await turn_context.send_activity(
+                "패밀리세일 매출조회 중 오류가 발생했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+            return
+        finally:
+            typing_stop_event.set()
+            try:
+                await typing_task
+            except Exception as typing_error:
+                print(
+                    "[FAMILY SALE TYPING TASK ERROR]"
+                    f" type={type(typing_error).__name__} message={typing_error}",
+                    flush=True,
+                )
+
+        status_code = int(api_result.get("status", 0) or 0)
+        response_text = str(api_result.get("response_text", ""))
+        response_json = api_result.get("response_json")
+        if not isinstance(response_json, dict):
+            response_json = {}
+
+        print(
+            "[FAMILY SALE API RESPONSE]"
+            f" status={status_code} body={response_text[:1000]}",
+            flush=True,
+        )
+        if (
+            status_code < 200
+            or status_code >= 300
+            or response_json.get("ok") is not True
+        ):
+            message = str(response_json.get("message") or response_text or "알 수 없는 오류")
+            await turn_context.send_activity(
+                "패밀리세일 매출조회 요청에 실패했습니다.\n\n"
+                f"HTTP 상태: {status_code}\n내용: {message}"
+            )
+            return
+
+        await self.update_or_send_card(
+            turn_context,
+            create_family_sale_result_card(response_json),
+        )
 
     async def handle_feedback(
         self,
@@ -4408,6 +4807,30 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        if action == "family_sale_recent_hour":
+            await self.handle_family_sale_submit(
+                turn_context,
+                submit_value,
+                search_type="recent_hour",
+            )
+            return
+
+        if action == "family_sale_custom":
+            await self.handle_family_sale_submit(
+                turn_context,
+                submit_value,
+                search_type="custom",
+            )
+            return
+
+        if action == "family_sale_page":
+            await self.handle_family_sale_submit(
+                turn_context,
+                submit_value,
+                search_type=str(submit_value.get("search_type") or "custom"),
+            )
+            return
+
         if action == "feedback":
             await self.handle_feedback(
                 turn_context,
@@ -4525,6 +4948,17 @@ class RelayBot(ActivityHandler):
                 MessageFactory.attachment(
                     create_refund_status_form_card()
                 )
+            )
+            return
+
+        if compact_command in {
+            "2026한섬패밀리세일매출조회",
+            "한섬패밀리세일매출조회",
+            "패밀리세일매출조회",
+        }:
+            self.clear_pending_search_tool(turn_context)
+            await turn_context.send_activity(
+                MessageFactory.attachment(create_family_sale_form_card())
             )
             return
 
