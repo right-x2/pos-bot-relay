@@ -505,10 +505,7 @@ async def forward_teams_image(
 
     form.add_field(
         "question",
-        (
-            question
-            or "첨부된 POS 화면을 분석해주세요."
-        ),
+        question or "",
     )
 
     form.add_field(

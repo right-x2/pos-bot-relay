@@ -51,45 +51,6 @@ def chat_answer(prompt: str) -> str:
     return res.choices[0].message.content
 
 
-def build_image_rag_query(question: str, vision_analysis: str) -> str:
-    client = get_client()
-    user_question = (question or "").strip()
-    image_summary = (vision_analysis or "").strip()
-
-    if not user_question and not image_summary:
-        return ""
-
-    res = client.chat.completions.create(
-        model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "너는 POS FAQ 벡터 검색용 질의를 만드는 도우미다. "
-                    "사용자 질문과 이미지 분석 결과를 바탕으로 FAQ 검색에 가장 잘 걸릴 한국어 질의 1개만 만들어라. "
-                    "메뉴명, 오류문구, 기능명, 화면명, 키워드를 보존하고 추측은 하지 마라. "
-                    "설명 없이 검색 질의 문장만 출력해라."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"[사용자 질문]\n{user_question}\n\n"
-                    f"[이미지 분석 결과]\n{image_summary}\n\n"
-                    "[출력 규칙]\n"
-                    "- FAQ 검색에 바로 넣을 질의 1개만 작성\n"
-                    "- 불필요한 수식어 제거\n"
-                    "- 확인된 오류문구, 버튼명, 메뉴명, 증상은 최대한 유지"
-                ),
-            },
-        ],
-        temperature=0,
-        max_completion_tokens=300,
-    )
-
-    return (res.choices[0].message.content or "").strip()
-
-
 def extract_barcode_text(image_bytes: bytes, mime_type: str) -> str | None:
     if not image_bytes:
         raise ValueError("image_bytes is empty")
@@ -203,7 +164,13 @@ def vision_answer(question: str, image_bytes: bytes, mime_type: str) -> str:
     client = get_client()
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
     image_url = f"data:{mime_type};base64,{image_b64}"
-    prompt = (question or "").strip() or "이미지를 분석해서 핵심 내용을 한국어로 설명해줘."
+    user_question = (question or "").strip()
+    prompt = (
+        "아래 사용자 입력에서 확인하려는 부분을 고려해 화면 정보를 추출해줘.\n"
+        f"사용자 입력: {user_question}"
+        if user_question
+        else "FAQ 검색에 사용할 수 있도록 화면 정보를 추출해줘."
+    )
 
     res = client.chat.completions.create(
         model=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
@@ -211,9 +178,11 @@ def vision_answer(question: str, image_bytes: bytes, mime_type: str) -> str:
             {
                 "role": "system",
                 "content": (
-                    "너는 현대백화점 POS 업무지원 챗봇이다. "
-                    "사용자가 올린 이미지를 보고 질문에 맞게 한국어로 간결하고 정확하게 답변한다. "
-                    "이미지에서 확실히 확인되지 않는 내용은 추측하지 말고 추가 확인이 필요하다고 안내한다."
+                    "너는 현대백화점 POS FAQ 검색을 위한 화면 정보 추출기다. "
+                    "이미지에서 확인되는 화면 종류, 메뉴명, 버튼명, 상태, 오류 문구와 오류 코드를 한국어로 정확하게 정리한다. "
+                    "오류 문구와 코드는 검색에 사용되므로 보이는 값을 가능한 한 원문 그대로 보존한다. "
+                    "이미지의 의미나 현재 상태는 설명하되 해결 방법, 대처 순서, 재시도 방법 등 조치 내용은 만들지 않는다. "
+                    "이미지에서 확실히 확인되지 않는 내용은 추측하지 않는다."
                 ),
             },
             {

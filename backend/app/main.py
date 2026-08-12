@@ -16,7 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from app.azure_client import build_image_rag_query, extract_barcode_text, vision_answer
+from app.azure_client import extract_barcode_text, vision_answer
 from app.command_router import parse_command
 from app.db import (
     fetch_item_master_by_code,
@@ -40,7 +40,12 @@ from app.db import (
     update_pos_master,
     update_pos_master_targets,
 )
-from app.rag import ask_rag, upsert_faq_vector, delete_faq_vector_by_key
+from app.rag import (
+    ask_rag,
+    build_image_retrieval_text,
+    delete_faq_vector_by_key,
+    upsert_faq_vector,
+)
 from app.item_diagnostics import build_item_diagnosis
 from app.faq_categories import FAQ_CATEGORY_NAMES, normalize_faq_category
 
@@ -1941,7 +1946,7 @@ async def rag_image_chat(
     requestId: str = Form(...),
     userId: str = Form(...),
     userName: str = Form(""),
-    question: str = Form(...),
+    question: str = Form(""),
     requestTime: str = Form(...),
     image: UploadFile = File(...),
 ):
@@ -2063,31 +2068,21 @@ async def rag_image_chat(
             media_type="application/json; charset=utf-8",
         )
 
-    try:
-        rag_query = build_image_rag_query(question=question, vision_analysis=vision_analysis)
-        logger.info(
-            "[image-chat] rag_query request_id=%s query=%r",
-            requestId,
-            rag_query,
-        )
-    except Exception:
-        traceback.print_exc()
-        rag_query = ""
-
-    if not rag_query:
-        rag_query = "\n".join(
-            value for value in [question.strip(), vision_analysis.strip()] if value
-        )
-        logger.info(
-            "[image-chat] rag_query_fallback request_id=%s query=%r",
-            requestId,
-            rag_query,
-        )
+    retrieval_text = build_image_retrieval_text(
+        question=question,
+        vision_analysis=vision_analysis,
+    )
+    logger.info(
+        "[image-chat] embedding_input request_id=%s chars=%s text=%r",
+        requestId,
+        len(retrieval_text),
+        retrieval_text,
+    )
 
     try:
         rag_result = ask_rag(
             question=question,
-            retrieval_question=rag_query,
+            retrieval_question=retrieval_text,
             image_context=vision_analysis,
         )
         answer = rag_result["answer"]
@@ -2105,7 +2100,8 @@ async def rag_image_chat(
                 "fileSize": len(image_bytes),
                 "savedPath": str(save_path),
                 "visionAnalysis": vision_analysis,
-                "ragQuery": rag_query,
+                "ragQuery": retrieval_text,
+                "embeddingInput": retrieval_text,
             },
             media_type="application/json; charset=utf-8",
         )
@@ -2132,7 +2128,8 @@ async def rag_image_chat(
             "fileSize": len(image_bytes),
             "savedPath": str(save_path),
             "visionAnalysis": vision_analysis,
-            "ragQuery": rag_query,
+            "ragQuery": retrieval_text,
+            "embeddingInput": retrieval_text,
             "logSaved": history["saved"],
             "logRegDt": history["regDt"],
             "logSeq": history["seq"],
