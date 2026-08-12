@@ -779,7 +779,7 @@ def insert_teams_faq_approval_notifications(
         NULL,
         NULL,
         NULL,
-        '02'
+        '04'
     FROM HDHBO.dbo.SYS_AUTH_GRP_USER
     WHERE AUTH_GRP_CD = '8001'
       AND NULLIF(LTRIM(RTRIM(USER_ID)), '') IS NOT NULL;
