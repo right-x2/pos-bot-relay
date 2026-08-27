@@ -2,6 +2,10 @@
 
 FastAPI, SQL Server, Azure OpenAI와 ChromaDB를 사용하는 POS FAQ/RAG 백엔드입니다.
 
+## 소스 동기화 이력
+
+- 2026-08-27 내부 서버 반출본 비교 결과: [`docs/SOURCE_SYNC_2026-08-27.md`](docs/SOURCE_SYNC_2026-08-27.md)
+
 ## 기준 환경
 
 - Windows Server 2019 계열 (`10.0.17763`)
