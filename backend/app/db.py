@@ -21,6 +21,36 @@ def get_conn_str() -> str:
     )
 
 
+def normalize_user_account_id(user_id: str | None) -> str:
+    normalized = str(user_id or "").strip()
+    if "@" in normalized:
+        normalized = normalized.split("@", 1)[0].strip()
+    return normalized
+
+
+def get_store_db_server(store_cd: str) -> str:
+    normalized_store_cd = str(store_cd or "").strip()
+    server = str(
+        settings.STORE_DB_SERVERS.get(normalized_store_cd, "")
+    ).strip()
+    if not server:
+        raise ValueError(
+            f"지원하지 않는 배정 점코드입니다: {normalized_store_cd or '-'}"
+        )
+    return server
+
+
+def get_store_conn_str(store_cd: str) -> str:
+    return (
+        f"DRIVER={{{settings.STORE_DB_DRIVER}}};"
+        f"SERVER={get_store_db_server(store_cd)};"
+        f"DATABASE={settings.STORE_DB_DATABASE};"
+        f"UID={settings.STORE_DB_USER};"
+        f"PWD={settings.STORE_DB_PASSWORD};"
+        f"TrustServerCertificate={settings.STORE_DB_TRUST_CERT};"
+    )
+
+
 def _serialize_db_value(value):
     if value is None:
         return None
@@ -71,8 +101,12 @@ def _fetch_table_rows(table_name: str, limit: int | None = None) -> list[dict]:
     return results
 
 
-def _fetch_rows(sql: str, params: tuple | list | None = None) -> list[dict]:
-    with pyodbc.connect(get_conn_str()) as conn:
+def _fetch_rows(
+    sql: str,
+    params: tuple | list | None = None,
+    conn_str: str | None = None,
+) -> list[dict]:
+    with pyodbc.connect(conn_str or get_conn_str()) as conn:
         cur = conn.cursor()
         if params is None:
             cur.execute(sql)
@@ -166,6 +200,7 @@ def fetch_pos_pattern_groups_by_pos(
     limit: int | None = None,
     pattern_code: str | None = None,
     pattern_name: str | None = None,
+    store_cd: str = TEST_STORE_CD,
 ) -> list[dict]:
     filter_sql, filter_params = _build_pattern_lookup_filter_clause(pattern_code, pattern_name)
     has_filter = bool(filter_sql)
@@ -184,8 +219,8 @@ def fetch_pos_pattern_groups_by_pos(
       AND m.STORE_CD = ?
       {filter_sql}
     """
-    params = (limit, pos_no, TEST_STORE_CD, *filter_params) if limit else (pos_no, TEST_STORE_CD, *filter_params)
-    rows = _fetch_rows(sql, params)
+    params = (limit, pos_no, store_cd, *filter_params) if limit else (pos_no, store_cd, *filter_params)
+    rows = _fetch_rows(sql, params, get_store_conn_str(store_cd))
     return rows
 
 
@@ -194,6 +229,7 @@ def fetch_pos_pattern_details_by_pos(
     limit: int | None = None,
     pattern_code: str | None = None,
     pattern_name: str | None = None,
+    store_cd: str = TEST_STORE_CD,
 ) -> list[dict]:
     filter_sql, filter_params = _build_pattern_lookup_filter_clause(pattern_code, pattern_name)
     distinct_top = "DISTINCT TOP (?) " if limit else "DISTINCT "
@@ -208,13 +244,16 @@ def fetch_pos_pattern_details_by_pos(
       AND m.STORE_CD = ?
       {filter_sql}
     """
-    params = (limit, pos_no, TEST_STORE_CD, *filter_params) if limit else (pos_no, TEST_STORE_CD, *filter_params)
-    rows = _fetch_rows(sql, params)
+    params = (limit, pos_no, store_cd, *filter_params) if limit else (pos_no, store_cd, *filter_params)
+    rows = _fetch_rows(sql, params, get_store_conn_str(store_cd))
     return rows
 
 
-def fetch_pos_pattern_group_by_pos(pos_no: str) -> dict | None:
-    rows = fetch_pos_pattern_groups_by_pos(pos_no, limit=1)
+def fetch_pos_pattern_group_by_pos(
+    pos_no: str,
+    store_cd: str = TEST_STORE_CD,
+) -> dict | None:
+    rows = fetch_pos_pattern_groups_by_pos(pos_no, limit=1, store_cd=store_cd)
     return rows[0] if rows else None
 
 
@@ -246,6 +285,7 @@ def fetch_pos_pattern_lookup_count_by_pos(
     pos_no: str,
     search_type: str | None,
     search_value: str | None,
+    store_cd: str = TEST_STORE_CD,
 ) -> int:
     filter_sql, filter_params = _build_pattern_lookup_page_clause(search_type, search_value)
     sql = f"""
@@ -268,7 +308,11 @@ def fetch_pos_pattern_lookup_count_by_pos(
     SELECT COUNT(1) AS TOTAL_COUNT
     FROM base
     """
-    rows = _fetch_rows(sql, (pos_no, TEST_STORE_CD, *filter_params))
+    rows = _fetch_rows(
+        sql,
+        (pos_no, store_cd, *filter_params),
+        get_store_conn_str(store_cd),
+    )
     if not rows:
         return 0
     return int(rows[0].get("TOTAL_COUNT") or 0)
@@ -280,6 +324,7 @@ def fetch_pos_pattern_lookup_page_by_pos(
     search_value: str | None,
     page: int,
     page_size: int = 10,
+    store_cd: str = TEST_STORE_CD,
 ) -> list[dict]:
     filter_sql, filter_params = _build_pattern_lookup_page_clause(search_type, search_value)
     page_no = max(int(page or 1), 1)
@@ -315,7 +360,11 @@ def fetch_pos_pattern_lookup_page_by_pos(
     OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
     """
 
-    rows = _fetch_rows(sql, (pos_no, TEST_STORE_CD, *filter_params, offset, page_size))
+    rows = _fetch_rows(
+        sql,
+        (pos_no, store_cd, *filter_params, offset, page_size),
+        get_store_conn_str(store_cd),
+    )
     return rows
 
 
@@ -347,7 +396,11 @@ def fetch_item_master_by_code(item_cd: str, store_cd: str = TEST_STORE_CD) -> di
       AND ITEM_CD = ?
     """
 
-    rows = _fetch_rows(sql, (store_cd, item_cd))
+    rows = _fetch_rows(
+        sql,
+        (store_cd, item_cd),
+        get_store_conn_str(store_cd),
+    )
     return rows[0] if rows else None
 
 
@@ -434,7 +487,11 @@ def fetch_plu_master_by_code(code: str, store_cd: str = TEST_STORE_CD) -> dict |
       )
     """
 
-    rows = _fetch_rows(sql, (store_cd, code, code, code))
+    rows = _fetch_rows(
+        sql,
+        (store_cd, code, code, code),
+        get_store_conn_str(store_cd),
+    )
     return rows[0] if rows else None
 
 
@@ -462,7 +519,7 @@ def update_pos_pattern_value(
       AND {condition}
     """
 
-    with pyodbc.connect(get_conn_str()) as conn:
+    with pyodbc.connect(get_store_conn_str(store_cd)) as conn:
         cur = conn.cursor()
         cur.execute(sql, new_value, store_cd, pos_no, pattern_value)
         rows = cur.rowcount
@@ -486,7 +543,7 @@ def update_pos_pattern_value_by_group_code(
       AND d.PTN_CD = ?
     """
 
-    with pyodbc.connect(get_conn_str()) as conn:
+    with pyodbc.connect(get_store_conn_str(store_cd)) as conn:
         cur = conn.cursor()
         cur.execute(sql, pattern_value, store_cd, pattern_group_code, pattern_code)
         rows = cur.rowcount
@@ -496,7 +553,7 @@ def update_pos_pattern_value_by_group_code(
 
 
 def fetch_user_assigned_store_code(user_id: str) -> str | None:
-    normalized_user_id = str(user_id or "").strip()
+    normalized_user_id = normalize_user_account_id(user_id)
     if not normalized_user_id:
         return None
 
@@ -521,6 +578,7 @@ def fetch_refund_progress(
     sale_dt: str,
     pos_no: str,
     deal_no: str,
+    assigned_store_cd: str,
 ) -> dict | None:
     sql = """
     SELECT TOP 1
@@ -537,7 +595,11 @@ def fetch_refund_progress(
       AND POS_NO = ?
       AND DEAL_NO = ?
     """
-    rows = _fetch_rows(sql, (store_cd, sale_dt, pos_no, deal_no))
+    rows = _fetch_rows(
+        sql,
+        (store_cd, sale_dt, pos_no, deal_no),
+        get_store_conn_str(assigned_store_cd),
+    )
     return rows[0] if rows else None
 
 
@@ -546,6 +608,7 @@ def delete_refund_progress(
     sale_dt: str,
     pos_no: str,
     deal_no: str,
+    assigned_store_cd: str,
 ) -> int:
     sql = """
     SET NOCOUNT ON;
@@ -558,7 +621,7 @@ def delete_refund_progress(
 
     SELECT CAST(@@ROWCOUNT AS INT) AS DELETED_COUNT;
     """
-    with pyodbc.connect(get_conn_str()) as conn:
+    with pyodbc.connect(get_store_conn_str(assigned_store_cd)) as conn:
         cur = conn.cursor()
         row = cur.execute(sql, store_cd, sale_dt, pos_no, deal_no).fetchone()
         deleted = int(row[0]) if row is not None else 0
@@ -983,7 +1046,7 @@ def update_pos_master(store_cd: str, pos_no: str) -> int:
       AND POS_NO = ?
     """
 
-    with pyodbc.connect(get_conn_str()) as conn:
+    with pyodbc.connect(get_store_conn_str(store_cd)) as conn:
         cur = conn.cursor()
         cur.execute(sql, store_cd, pos_no)
         rows = cur.rowcount
@@ -1028,7 +1091,7 @@ def update_pos_master_targets(
 
     sql = base_sql + "\nWHERE " + "\n  AND ".join(where_lines)
 
-    with pyodbc.connect(get_conn_str()) as conn:
+    with pyodbc.connect(get_store_conn_str(store_cd)) as conn:
         cur = conn.cursor()
         cur.execute(sql, params)
         rows = cur.rowcount

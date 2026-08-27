@@ -698,6 +698,13 @@ def create_product_search_result_card(
 
     facts = [
         {
+            "title": "조회 점포",
+            "value": str(
+                response_json.get("storeCode", "-")
+                or "-"
+            ),
+        },
+        {
             "title": "조회 구분",
             "value": str(
                 response_json.get("itemType", "-")
@@ -1185,7 +1192,11 @@ def create_refund_status_result_card(response_json: dict) -> Attachment:
         progress = {}
 
     facts = [
-        {"title": "점코드", "value": str(original.get("storeCode") or "-")},
+        {
+            "title": "조회 점포",
+            "value": str(response_json.get("assignedStoreCode") or "-"),
+        },
+        {"title": "원거래 점코드", "value": str(original.get("storeCode") or "-")},
         {"title": "영업일자", "value": str(original.get("saleDate") or "-")},
         {"title": "POS 번호", "value": str(original.get("posNo") or "-")},
         {"title": "거래번호", "value": str(original.get("dealNo") or "-")},
@@ -1287,7 +1298,15 @@ def create_refund_cancel_result_card(response_json: dict) -> Attachment:
                 {"type": "TextBlock", "text": message[:1000], "wrap": True},
                 {
                     "type": "FactSet",
-                    "facts": [{"title": "삭제 건수", "value": f"{deleted}건"}],
+                    "facts": [
+                        {
+                            "title": "처리 점포",
+                            "value": str(
+                                response_json.get("assignedStoreCode") or "-"
+                            ),
+                        },
+                        {"title": "삭제 건수", "value": f"{deleted}건"},
+                    ],
                 },
             ],
             "actions": [
@@ -1615,6 +1634,10 @@ def create_pattern_update_result_card(
         response_json.get("patternValue")
         or pattern_value
     )
+    store_code = str(
+        response_json.get("storeCode")
+        or "-"
+    )
     try:
         updated = int(
             response_json.get("updated", 0)
@@ -1644,6 +1667,10 @@ def create_pattern_update_result_card(
             {
                 "type": "FactSet",
                 "facts": [
+                    {
+                        "title": "수정 점포",
+                        "value": store_code,
+                    },
                     {
                         "title": "패턴 그룹 코드",
                         "value": result_group_code,
@@ -1705,6 +1732,10 @@ def create_pattern_search_result_card(
 
     pos_no = str(
         response_json.get("posNo", "")
+        or ""
+    )
+    store_code = str(
+        response_json.get("storeCode", "")
         or ""
     )
     pattern_group_code = str(
@@ -1785,6 +1816,10 @@ def create_pattern_search_result_card(
         {
             "type": "FactSet",
             "facts": [
+                {
+                    "title": "조회 점포",
+                    "value": store_code or "-",
+                },
                 {
                     "title": "POS 번호",
                     "value": pos_no or "-",
@@ -3084,6 +3119,16 @@ class RelayBot(ActivityHandler):
             else "단품"
         )
 
+        teams_account_id, _ = await get_teams_account(
+            turn_context
+        )
+        if not teams_account_id:
+            await turn_context.send_activity(
+                "Teams 계정 아이디를 확인하지 못해 "
+                "상·단품 조회를 처리할 수 없습니다."
+            )
+            return
+
         typing_stop_event = asyncio.Event()
         typing_task = asyncio.create_task(
             keep_typing(
@@ -3111,6 +3156,7 @@ class RelayBot(ActivityHandler):
 
             api_result = await search_items(
                 target_url=CONFIG.ITEM_SEARCH_API_URL,
+                user_id=teams_account_id,
                 item_type=item_type,
                 code=search_code,
                 image_bytes=image_bytes,
@@ -3230,13 +3276,21 @@ class RelayBot(ActivityHandler):
             )
             return
 
-        sender = turn_context.activity.from_property
+        teams_account_id, _ = await get_teams_account(
+            turn_context
+        )
+        if not teams_account_id:
+            await turn_context.send_activity(
+                "Teams 계정 아이디를 확인하지 못해 "
+                "POS 마스터 생성을 처리할 수 없습니다."
+            )
+            return
 
         print(
             "[POS MASTER API REQUEST]"
             f" tool={TOOL_POS_MASTER_CREATE}"
             f" pos_no={normalized_pos_no}"
-            f" user_id={sender.id if sender else ''}",
+            f" user_id={teams_account_id}",
             flush=True,
         )
 
@@ -3251,6 +3305,7 @@ class RelayBot(ActivityHandler):
         try:
             api_result = await create_pos_master(
                 target_url=CONFIG.POS_MASTER_API_URL,
+                user_id=teams_account_id,
                 pos_no=normalized_pos_no,
             )
 
@@ -3397,13 +3452,24 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        teams_account_id, _ = await get_teams_account(
+            turn_context
+        )
+        if not teams_account_id:
+            await turn_context.send_activity(
+                "Teams 계정 아이디를 확인하지 못해 "
+                "패턴 조회를 처리할 수 없습니다."
+            )
+            return
+
         print(
             "[PATTERN SEARCH API REQUEST]"
             f" tool={TOOL_PATTERN_SEARCH}"
             f" pos_no={pos_no}"
             f" search_type={search_type}"
             f" search_value={search_value}"
-            f" page={page}",
+            f" page={page}"
+            f" user_id={teams_account_id}",
             flush=True,
         )
 
@@ -3418,6 +3484,7 @@ class RelayBot(ActivityHandler):
         try:
             api_result = await search_patterns(
                 target_url=CONFIG.PATTERN_SEARCH_API_URL,
+                user_id=teams_account_id,
                 pos_no=pos_no,
                 search_type=search_type,
                 search_value=search_value,
@@ -3726,6 +3793,16 @@ class RelayBot(ActivityHandler):
             await turn_context.send_activity("입력값의 허용 길이를 초과했습니다.")
             return
 
+        teams_account_id, _ = await get_teams_account(
+            turn_context
+        )
+        if not teams_account_id:
+            await turn_context.send_activity(
+                "Teams 계정 아이디를 확인하지 못해 "
+                f"반품 {('취소' if cancel else '조회')} 요청을 처리할 수 없습니다."
+            )
+            return
+
         target_url = (
             CONFIG.REFUND_CANCEL_API_URL
             if cancel
@@ -3739,6 +3816,7 @@ class RelayBot(ActivityHandler):
         try:
             api_result = await request_refund_operation(
                 target_url=target_url,
+                user_id=teams_account_id,
                 store_code=store_code,
                 sale_date=normalized_sale_date,
                 pos_no=pos_no,

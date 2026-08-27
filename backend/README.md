@@ -54,6 +54,14 @@ python .\scripts\verify_runtime.py --chroma-smoke
 
 `.env.example`을 `.env`로 복사한 뒤 실제 값을 내부 서버에서만 입력합니다. `.env`는 Git에 포함되지 않습니다.
 
+### Teams 계정 기준 점포 DB 선택
+
+POS 마스터, 상·단품 조회, 패턴 조회·수정, 반품 상태조회·취소는 Teams 계정의 이메일 앞부분을 `userId`로 받습니다. 백엔드는 중앙 DB의 `HDHBO..SYS_USER_MST`에서 `USER_ID`가 일치하는 사용자의 `ASSIGN_STORE_CD`를 조회한 뒤 해당 점포 DB에 연결합니다.
+
+점포 DB 공통 계정은 `STORE_DB_USER`, `STORE_DB_PASSWORD`에 입력하고 점포별 서버는 `STORE_DB_SERVER_220`, `STORE_DB_SERVER_260`, `STORE_DB_SERVER_420`, `STORE_DB_SERVER_720`, `STORE_DB_SERVER_780`으로 관리합니다. 지원 목록에 없는 점코드이거나 배정 점코드를 찾지 못하면 기본 DB로 우회하지 않고 도구 요청을 거부합니다.
+
+FAQ/RAG와 계정 조회는 기존 `DB_*` 연결을 사용하며, 한섬패밀리세일 조회는 기존 `FAMILY_SALE_DB_*` 전용 연결을 그대로 사용합니다.
+
 Chroma 경로는 새 배포 때 임의로 변경하지 않습니다. 상대 경로를 사용한다면 반드시 `backend` 디렉터리에서 서버를 실행해야 같은 저장소를 엽니다.
 
 FAQ 삭제는 Windows HNSW 네이티브 충돌을 피하기 위해 물리 삭제 대신 별도

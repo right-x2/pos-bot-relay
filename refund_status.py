@@ -7,12 +7,18 @@ import aiohttp
 async def request_refund_operation(
     *,
     target_url: str,
+    user_id: str,
     store_code: str,
     sale_date: str,
     pos_no: str,
     deal_no: str,
 ) -> dict[str, Any]:
+    normalized_user_id = user_id.strip()
+    if not normalized_user_id:
+        raise ValueError("사용자 아이디가 필요합니다.")
+
     payload = {
+        "userId": normalized_user_id,
         "storeCode": store_code.strip(),
         "saleDate": sale_date.strip(),
         "posNo": pos_no.strip(),

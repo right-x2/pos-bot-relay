@@ -13,6 +13,19 @@ class Settings:
     DB_PASSWORD = os.getenv("DB_PASSWORD")
     DB_TRUST_CERT = os.getenv("DB_TRUST_CERT", "yes")
 
+    STORE_DB_DRIVER = os.getenv("STORE_DB_DRIVER", DB_DRIVER)
+    STORE_DB_DATABASE = os.getenv("STORE_DB_DATABASE", DB_DATABASE)
+    STORE_DB_USER = os.getenv("STORE_DB_USER", DB_USER)
+    STORE_DB_PASSWORD = os.getenv("STORE_DB_PASSWORD", DB_PASSWORD)
+    STORE_DB_TRUST_CERT = os.getenv("STORE_DB_TRUST_CERT", DB_TRUST_CERT)
+    STORE_DB_SERVERS = {
+        "220": os.getenv("STORE_DB_SERVER_220", "10.30.200.4"),
+        "260": os.getenv("STORE_DB_SERVER_260", "10.18.200.4"),
+        "420": os.getenv("STORE_DB_SERVER_420", "10.46.200.4"),
+        "720": os.getenv("STORE_DB_SERVER_720", "10.153.200.4"),
+        "780": os.getenv("STORE_DB_SERVER_780", "10.192.200.4"),
+    }
+
     FAMILY_SALE_DB_DRIVER = os.getenv("FAMILY_SALE_DB_DRIVER", DB_DRIVER)
     FAMILY_SALE_DB_HOST = os.getenv("FAMILY_SALE_DB_HOST", "10.28.200.5")
     FAMILY_SALE_DB_PORT = int(os.getenv("FAMILY_SALE_DB_PORT", "1433"))

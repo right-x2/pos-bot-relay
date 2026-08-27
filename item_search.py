@@ -7,14 +7,21 @@ import aiohttp
 async def search_items(
     *,
     target_url: str,
+    user_id: str,
     item_type: str,
     code: str = "",
     image_bytes: Optional[bytes] = None,
     image_filename: str = "barcode-image.jpg",
     image_content_type: str = "image/jpeg",
 ) -> dict[str, Any]:
+    normalized_user_id = user_id.strip()
     normalized_item_type = item_type.strip()
     normalized_code = code.strip()
+
+    if not normalized_user_id:
+        raise ValueError(
+            "사용자 아이디가 필요합니다."
+        )
 
     if normalized_item_type not in (
         "상품",
@@ -31,6 +38,11 @@ async def search_items(
 
     form = aiohttp.FormData(
         quote_fields=False
+    )
+    form.add_field(
+        "userId",
+        normalized_user_id,
+        content_type="text/plain",
     )
     form.add_field(
         "상단품구분",

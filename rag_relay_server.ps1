@@ -275,7 +275,11 @@ try {
                 $TargetUrl = $PosMasterUrl
 
                 $PosNo = ([string]$Incoming.posNo).Trim()
-                $RequestedBy = ([string]$Incoming.requestedBy).Trim()
+                $UserId = ([string]$Incoming.userId).Trim()
+
+                if ([string]::IsNullOrWhiteSpace($UserId)) {
+                    throw "Missing userId"
+                }
 
                 if ([string]::IsNullOrWhiteSpace($PosNo)) {
                     throw "Missing posNo"
@@ -317,11 +321,8 @@ try {
                 }
 
                 $PosMasterPayload = [ordered]@{
+                    userId = $UserId
                     posNo = $PosNo
-                }
-
-                if (-not [string]::IsNullOrWhiteSpace($RequestedBy)) {
-                    $PosMasterPayload["requestedBy"] = $RequestedBy
                 }
 
                 $ForwardBody = $PosMasterPayload |
@@ -330,10 +331,15 @@ try {
             elseif ($Path -eq "/tools/pattern_lookup") {
                 $TargetUrl = $PatternSearchUrl
 
+                $UserId = ([string]$Incoming.userId).Trim()
                 $PosNo = [string]$Incoming.posNo
                 $SearchType = [string]$Incoming.searchType
                 $SearchValue = [string]$Incoming.searchValue
                 $PageValue = $Incoming.page
+
+                if ([string]::IsNullOrWhiteSpace($UserId)) {
+                    throw "Missing userId"
+                }
 
                 if ([string]::IsNullOrWhiteSpace($PosNo)) {
                     throw "Missing posNo"
@@ -358,6 +364,7 @@ try {
                 }
 
                 $ForwardBody = [ordered]@{
+                    userId = $UserId
                     posNo = $PosNo.Trim()
                     searchType = $ForwardSearchType
                     searchValue = $SearchValue.Trim()
@@ -407,10 +414,14 @@ try {
                 }
 
                 $StoreCode = ([string]$Incoming.storeCode).Trim()
+                $UserId = ([string]$Incoming.userId).Trim()
                 $SaleDate = ([string]$Incoming.saleDate).Trim()
                 $PosNo = ([string]$Incoming.posNo).Trim()
                 $DealNo = ([string]$Incoming.dealNo).Trim()
 
+                if ([string]::IsNullOrWhiteSpace($UserId)) {
+                    throw "Missing userId"
+                }
                 if ([string]::IsNullOrWhiteSpace($StoreCode)) {
                     throw "Missing storeCode"
                 }
@@ -425,6 +436,7 @@ try {
                 }
 
                 $ForwardBody = [ordered]@{
+                    userId = $UserId
                     storeCode = $StoreCode
                     saleDate = $SaleDate
                     posNo = $PosNo

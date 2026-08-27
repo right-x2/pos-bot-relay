@@ -40,10 +40,13 @@ db_spec.loader.exec_module(db)
 
 class ItemDbContractTests(unittest.TestCase):
     def test_item_lookup_selects_display_columns(self):
-        with patch.object(db, "_fetch_rows", return_value=[]) as fetch:
+        with (
+            patch.object(db, "get_store_conn_str", return_value="store-connection"),
+            patch.object(db, "_fetch_rows", return_value=[]) as fetch,
+        ):
             db.fetch_item_master_by_code("8801234567890", "210")
 
-        sql, params = fetch.call_args.args
+        sql, params, conn_str = fetch.call_args.args
         for column in (
             "EMP_ENURI_RT",
             "GRP_CMP_ENURI_RT",
@@ -58,6 +61,7 @@ class ItemDbContractTests(unittest.TestCase):
         ):
             self.assertIn(column, sql)
         self.assertEqual(params, ("210", "8801234567890"))
+        self.assertEqual(conn_str, "store-connection")
 
 
 if __name__ == "__main__":

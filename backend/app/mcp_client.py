@@ -20,8 +20,8 @@ def _build_headers() -> dict:
     return headers
 
 
-def create_pos_master(pos_no: str, requested_by: str | None):
-    payload = {"posNo": pos_no, "requestedBy": requested_by}
+def create_pos_master(pos_no: str, user_id: str):
+    payload = {"posNo": pos_no, "userId": user_id}
     data = json.dumps(payload).encode("utf-8")
 
     req = urllib.request.Request(
@@ -42,13 +42,19 @@ def create_pos_master(pos_no: str, requested_by: str | None):
 
 def fetch_pos_patterns(
     pos_no: str,
+    user_id: str,
     group_limit: int | None = None,
     detail_limit: int | None = None,
 ):
     if not pos_no or not pos_no.strip():
         raise ValueError("pos_no is empty")
 
-    payload = {"posNo": pos_no, "groupLimit": group_limit, "detailLimit": detail_limit}
+    payload = {
+        "posNo": pos_no,
+        "userId": user_id,
+        "groupLimit": group_limit,
+        "detailLimit": detail_limit,
+    }
     data = json.dumps(payload).encode("utf-8")
 
     req = urllib.request.Request(

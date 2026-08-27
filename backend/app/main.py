@@ -24,6 +24,7 @@ from app.db import (
     fetch_plu_master_by_code,
     fetch_refund_progress,
     fetch_user_assigned_store_code,
+    get_store_db_server,
     get_post_request_by_key,
     get_post_request_by_seq,
     fetch_pos_pattern_group_by_pos,
@@ -230,19 +231,20 @@ class UpdateHelpYnRequest(BaseModel):
 class CreatePosMasterRequest(BaseModel):
     posNo: str | None = None
     posKnd: str | None = None
-    requestedBy: str | None = None
+    userId: str
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "posNo": "1111,1112",
-                "requestedBy": "system",
+                "userId": "kimjungwoo",
             }
         }
     )
 
 
 class PatternLookupRequest(BaseModel):
+    userId: str
     posNo: str
     searchType: str | None = None
     searchValue: str | None = None
@@ -251,6 +253,7 @@ class PatternLookupRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
                 "example": {
+                    "userId": "kimjungwoo",
                     "posNo": "1011",
                     "searchType": None,
                     "searchValue": None,
@@ -279,6 +282,7 @@ class PatternUpdateRequest(BaseModel):
 
 
 class RefundStatusRequest(BaseModel):
+    userId: str
     storeCode: str
     saleDate: str
     posNo: str
@@ -287,6 +291,7 @@ class RefundStatusRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "userId": "kimjungwoo",
                 "storeCode": "210",
                 "saleDate": "20260812",
                 "posNo": "1111",
@@ -457,6 +462,54 @@ def _get_reference_category(result: dict | None) -> str | None:
         return None
     text = str(category).strip()
     return text or None
+
+
+class ToolStoreResolutionError(ValueError):
+    def __init__(self, message: str, error_code: str, status_code: int):
+        super().__init__(message)
+        self.error_code = error_code
+        self.status_code = status_code
+
+
+def _resolve_tool_store_code(user_id: str | None) -> str:
+    normalized_user_id = _empty_to_none(user_id)
+    if normalized_user_id is None:
+        raise ToolStoreResolutionError(
+            "Teams 계정 아이디를 확인할 수 없습니다.",
+            "USER_ID_REQUIRED",
+            400,
+        )
+
+    store_cd = fetch_user_assigned_store_code(normalized_user_id)
+    if store_cd is None:
+        raise ToolStoreResolutionError(
+            "사용자의 배정 점코드를 찾을 수 없습니다.",
+            "ASSIGNED_STORE_NOT_FOUND",
+            404,
+        )
+
+    try:
+        get_store_db_server(store_cd)
+    except ValueError as error:
+        raise ToolStoreResolutionError(
+            str(error),
+            "UNSUPPORTED_ASSIGNED_STORE",
+            400,
+        ) from error
+
+    return store_cd
+
+
+def _tool_store_error_response(error: ToolStoreResolutionError) -> JSONResponse:
+    return JSONResponse(
+        status_code=error.status_code,
+        content={
+            "ok": False,
+            "message": str(error),
+            "errorCode": error.error_code,
+        },
+        media_type="application/json; charset=utf-8",
+    )
 
 
 def _normalize_limit(value: int | None) -> int | None:
@@ -1110,8 +1163,7 @@ def health(request: Request):
     )
 
 
-def _update_pos_master_and_message(targets: dict):
-    store_cd = "210"
+def _update_pos_master_and_message(targets: dict, store_cd: str):
     target_type = targets.get("type")
     if target_type == "pos_knd":
         updated = update_pos_master_targets(
@@ -1173,9 +1225,33 @@ def create_pos_master_tool(req: CreatePosMasterRequest, request: Request):
         )
 
     try:
-        _log_api_step(request, "update_pos_master_start", target_type=targets.get("type"))
-        ok, message, store_cd, updated = _update_pos_master_and_message(targets)
-        _log_api_step(request, "update_pos_master_done", target_type=targets.get("type"), updated=updated)
+        store_cd = _resolve_tool_store_code(req.userId)
+    except ToolStoreResolutionError as error:
+        _log_api_step(
+            request,
+            "store_resolution_failed",
+            error_code=error.error_code,
+        )
+        return _tool_store_error_response(error)
+
+    try:
+        _log_api_step(
+            request,
+            "update_pos_master_start",
+            target_type=targets.get("type"),
+            store_cd=store_cd,
+        )
+        ok, message, store_cd, updated = _update_pos_master_and_message(
+            targets,
+            store_cd,
+        )
+        _log_api_step(
+            request,
+            "update_pos_master_done",
+            target_type=targets.get("type"),
+            store_cd=store_cd,
+            updated=updated,
+        )
 
         return JSONResponse(
             content={
@@ -1257,17 +1333,16 @@ def pattern_update_tool(req: PatternUpdateRequest, request: Request):
                 media_type="application/json; charset=utf-8",
             )
 
-        store_cd = fetch_user_assigned_store_code(user_id)
-        if store_cd is None:
-            _log_api_step(request, "assigned_store_not_found", user_id=user_id)
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "ok": False,
-                    "message": "사용자의 배정 점코드를 찾을 수 없습니다.",
-                },
-                media_type="application/json; charset=utf-8",
+        try:
+            store_cd = _resolve_tool_store_code(user_id)
+        except ToolStoreResolutionError as error:
+            _log_api_step(
+                request,
+                "store_resolution_failed",
+                user_id=user_id,
+                error_code=error.error_code,
             )
+            return _tool_store_error_response(error)
 
         _log_api_step(
             request,
@@ -1325,6 +1400,7 @@ def pattern_update_tool(req: PatternUpdateRequest, request: Request):
 def pattern_lookup_tool(req: PatternLookupRequest, request: Request):
     try:
         _log_api_step(request, "validate")
+        user_id = _empty_to_none(req.userId)
         pos_no = _empty_to_none(str(req.posNo) if req.posNo is not None else None)
         search_type, search_type_valid = _normalize_pattern_lookup_search_type(req.searchType)
         search_value = _empty_to_none(str(req.searchValue) if req.searchValue is not None else None)
@@ -1374,6 +1450,17 @@ def pattern_lookup_tool(req: PatternLookupRequest, request: Request):
                 media_type="application/json; charset=utf-8",
             )
 
+        try:
+            store_cd = _resolve_tool_store_code(user_id)
+        except ToolStoreResolutionError as error:
+            _log_api_step(
+                request,
+                "store_resolution_failed",
+                user_id=user_id or "",
+                error_code=error.error_code,
+            )
+            return _tool_store_error_response(error)
+
         page_size = 10
 
         _log_api_step(
@@ -1383,9 +1470,15 @@ def pattern_lookup_tool(req: PatternLookupRequest, request: Request):
             search_type=search_type or "",
             search_value=search_value or "",
             page=page,
+            store_cd=store_cd,
         )
-        pattern_group = fetch_pos_pattern_group_by_pos(pos_no)
-        total_count = fetch_pos_pattern_lookup_count_by_pos(pos_no, search_type, search_value)
+        pattern_group = fetch_pos_pattern_group_by_pos(pos_no, store_cd=store_cd)
+        total_count = fetch_pos_pattern_lookup_count_by_pos(
+            pos_no,
+            search_type,
+            search_value,
+            store_cd=store_cd,
+        )
         total_pages = math.ceil(total_count / page_size) if total_count else 0
         _log_api_step(
             request,
@@ -1403,6 +1496,7 @@ def pattern_lookup_tool(req: PatternLookupRequest, request: Request):
             search_value=search_value or "",
             page=page,
             page_size=page_size,
+            store_cd=store_cd,
         )
         rows = fetch_pos_pattern_lookup_page_by_pos(
             pos_no,
@@ -1410,6 +1504,7 @@ def pattern_lookup_tool(req: PatternLookupRequest, request: Request):
             search_value,
             page,
             page_size,
+            store_cd=store_cd,
         )
         _log_api_step(
             request,
@@ -1434,6 +1529,7 @@ def pattern_lookup_tool(req: PatternLookupRequest, request: Request):
         return JSONResponse(
             content={
                 "ok": True,
+                "storeCode": store_cd,
                 "posNo": pos_no,
                 "patternGroupCode": pattern_group_code,
                 "patternGroupName": pattern_group_name,
@@ -1473,6 +1569,16 @@ def refund_status_tool(req: RefundStatusRequest, request: Request):
         )
 
     try:
+        assigned_store_cd = _resolve_tool_store_code(req.userId)
+    except ToolStoreResolutionError as error:
+        _log_api_step(
+            request,
+            "store_resolution_failed",
+            error_code=error.error_code,
+        )
+        return _tool_store_error_response(error)
+
+    try:
         _log_api_step(
             request,
             "refund_status_start",
@@ -1480,13 +1586,21 @@ def refund_status_tool(req: RefundStatusRequest, request: Request):
             sale_date=sale_date,
             pos_no=pos_no,
             deal_no=deal_no,
+            assigned_store_cd=assigned_store_cd,
         )
-        row = fetch_refund_progress(store_code, sale_date, pos_no, deal_no)
+        row = fetch_refund_progress(
+            store_code,
+            sale_date,
+            pos_no,
+            deal_no,
+            assigned_store_cd,
+        )
         found = row is not None
         _log_api_step(request, "refund_status_done", found=found)
         return JSONResponse(
             content={
                 "ok": True,
+                "assignedStoreCode": assigned_store_cd,
                 "found": found,
                 "message": (
                     "반품 진행중입니다."
@@ -1641,6 +1755,16 @@ def refund_cancel_tool(req: RefundStatusRequest, request: Request):
         )
 
     try:
+        assigned_store_cd = _resolve_tool_store_code(req.userId)
+    except ToolStoreResolutionError as error:
+        _log_api_step(
+            request,
+            "store_resolution_failed",
+            error_code=error.error_code,
+        )
+        return _tool_store_error_response(error)
+
+    try:
         _log_api_step(
             request,
             "refund_cancel_start",
@@ -1648,12 +1772,20 @@ def refund_cancel_tool(req: RefundStatusRequest, request: Request):
             sale_date=sale_date,
             pos_no=pos_no,
             deal_no=deal_no,
+            assigned_store_cd=assigned_store_cd,
         )
-        deleted = delete_refund_progress(store_code, sale_date, pos_no, deal_no)
+        deleted = delete_refund_progress(
+            store_code,
+            sale_date,
+            pos_no,
+            deal_no,
+            assigned_store_cd,
+        )
         _log_api_step(request, "refund_cancel_done", deleted=deleted)
         return JSONResponse(
             content={
                 "ok": True,
+                "assignedStoreCode": assigned_store_cd,
                 "deleted": deleted,
                 "message": (
                     "반품 진행이 취소되었습니다."
@@ -1702,14 +1834,19 @@ def chat(req: ChatRequest, request: Request):
                 targets = _parse_pos_master_targets(cmd["pos_no"], None)
                 if targets is None:
                     raise ValueError("invalid POS master target")
+                store_cd = _resolve_tool_store_code(req.userId)
 
                 _log_api_step(
                     request,
                     "cmd_create_pos_master_start",
                     pos_no=cmd["pos_no"],
                     target_type=targets.get("type"),
+                    store_cd=store_cd,
                 )
-                _, message, store_cd, _ = _update_pos_master_and_message(targets)
+                _, message, store_cd, _ = _update_pos_master_and_message(
+                    targets,
+                    store_cd,
+                )
                 answer = message or f"POS 마스터 업데이트 완료: {store_cd}-{cmd['pos_no']}"
                 history = _save_history(
                     request,
@@ -1736,6 +1873,26 @@ def chat(req: ChatRequest, request: Request):
                     },
                     media_type="application/json; charset=utf-8"
                 )
+            except ToolStoreResolutionError as error:
+                answer = str(error)
+                history = _save_history(
+                    request,
+                    user_id=req.userId,
+                    qry=question,
+                    answer=answer,
+                    category=None,
+                )
+                return JSONResponse(
+                    content={
+                        "resCd": "9999",
+                        "resMsg": error.error_code.lower(),
+                        "answer": answer,
+                        "logSaved": history["saved"],
+                        "logRegDt": history["regDt"],
+                        "logSeq": history["seq"],
+                    },
+                    media_type="application/json; charset=utf-8",
+                )
             except Exception:
                 traceback.print_exc()
                 return JSONResponse(
@@ -1752,6 +1909,7 @@ def chat(req: ChatRequest, request: Request):
                 pos_no = cmd["pos_no"]
                 pattern = cmd.get("pattern")
                 pattern_code, pattern_name = _pattern_lookup_filters_from_command(pattern)
+                store_cd = _resolve_tool_store_code(req.userId)
 
                 _log_api_step(
                     request,
@@ -1759,18 +1917,21 @@ def chat(req: ChatRequest, request: Request):
                     pos_no=pos_no,
                     pattern_code=pattern_code or "",
                     pattern_name=pattern_name or "",
+                    store_cd=store_cd,
                 )
                 groups = fetch_pos_pattern_groups_by_pos(
                     pos_no,
                     200,
                     pattern_code=pattern_code,
                     pattern_name=pattern_name,
+                    store_cd=store_cd,
                 )
                 details = fetch_pos_pattern_details_by_pos(
                     pos_no,
                     500,
                     pattern_code=pattern_code,
                     pattern_name=pattern_name,
+                    store_cd=store_cd,
                 )
 
                 answer = _format_pattern_answer(pos_no, pattern, groups, details)
@@ -1800,6 +1961,26 @@ def chat(req: ChatRequest, request: Request):
                     },
                     media_type="application/json; charset=utf-8"
                 )
+            except ToolStoreResolutionError as error:
+                answer = str(error)
+                history = _save_history(
+                    request,
+                    user_id=req.userId,
+                    qry=question,
+                    answer=answer,
+                    category=None,
+                )
+                return JSONResponse(
+                    content={
+                        "resCd": "9999",
+                        "resMsg": error.error_code.lower(),
+                        "answer": answer,
+                        "logSaved": history["saved"],
+                        "logRegDt": history["regDt"],
+                        "logSeq": history["seq"],
+                    },
+                    media_type="application/json; charset=utf-8",
+                )
             except Exception:
                 traceback.print_exc()
                 return JSONResponse(
@@ -1816,27 +1997,7 @@ def chat(req: ChatRequest, request: Request):
                 pos_no = cmd["pos_no"]
                 pattern = cmd["pattern"]
                 new_value = cmd["value"]
-                store_cd = fetch_user_assigned_store_code(req.userId or "")
-                if store_cd is None:
-                    answer = "사용자의 배정 점코드를 찾을 수 없어 패턴을 수정하지 못했습니다."
-                    history = _save_history(
-                        request,
-                        user_id=req.userId,
-                        qry=question,
-                        answer=answer,
-                        category=None,
-                    )
-                    return JSONResponse(
-                        content={
-                            "resCd": "9999",
-                            "resMsg": "assigned_store_not_found",
-                            "answer": answer,
-                            "logSaved": history["saved"],
-                            "logRegDt": history["regDt"],
-                            "logSeq": history["seq"],
-                        },
-                        media_type="application/json; charset=utf-8",
-                    )
+                store_cd = _resolve_tool_store_code(req.userId)
 
                 _log_api_step(
                     request,
@@ -1876,6 +2037,26 @@ def chat(req: ChatRequest, request: Request):
                         "logSeq": history["seq"],
                     },
                     media_type="application/json; charset=utf-8"
+                )
+            except ToolStoreResolutionError as error:
+                answer = str(error)
+                history = _save_history(
+                    request,
+                    user_id=req.userId,
+                    qry=question,
+                    answer=answer,
+                    category=None,
+                )
+                return JSONResponse(
+                    content={
+                        "resCd": "9999",
+                        "resMsg": error.error_code.lower(),
+                        "answer": answer,
+                        "logSaved": history["saved"],
+                        "logRegDt": history["regDt"],
+                        "logSeq": history["seq"],
+                    },
+                    media_type="application/json; charset=utf-8",
                 )
             except Exception:
                 traceback.print_exc()
@@ -2086,11 +2267,22 @@ def get_top_faq_questions(req: TopFaqQuestionsRequest, request: Request):
 @app.post("/api/items/search")
 async def search_item_api(
     request: Request,
+    userId: str = Form(..., alias="userId"),
     itemType: str = Form(..., alias="상단품구분"),
     code: str = Form("", alias="코드"),
     barcodeImage: UploadFile | None = File(None, alias="바코드이미지"),
 ):
     try:
+        try:
+            store_cd = _resolve_tool_store_code(userId)
+        except ToolStoreResolutionError as error:
+            _log_api_step(
+                request,
+                "store_resolution_failed",
+                error_code=error.error_code,
+            )
+            return _tool_store_error_response(error)
+
         normalized_type = _normalize_item_type(itemType)
         if normalized_type is None:
             return JSONResponse(
@@ -2169,12 +2361,13 @@ async def search_item_api(
             item_type=normalized_type,
             resolved_code=resolved_code,
             has_barcode_image=barcodeImage is not None,
+            store_cd=store_cd,
         )
 
         if normalized_type == "ITEM":
-            result = fetch_item_master_by_code(resolved_code)
+            result = fetch_item_master_by_code(resolved_code, store_cd)
         else:
-            result = fetch_plu_master_by_code(resolved_code)
+            result = fetch_plu_master_by_code(resolved_code, store_cd)
 
         _log_api_step(
             request,
@@ -2182,11 +2375,13 @@ async def search_item_api(
             item_type=normalized_type,
             resolved_code=resolved_code,
             found=bool(result),
+            store_cd=store_cd,
         )
 
         return JSONResponse(
             content={
                 "ok": True,
+                "storeCode": store_cd,
                 "itemType": normalized_type,
                 "inputCode": input_code,
                 "barcodeText": barcode_text,

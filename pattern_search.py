@@ -7,14 +7,21 @@ import aiohttp
 async def search_patterns(
     *,
     target_url: str,
+    user_id: str,
     pos_no: str,
     search_type: str,
     search_value: str,
     page: int,
 ) -> dict[str, Any]:
+    normalized_user_id = user_id.strip()
     normalized_pos_no = pos_no.strip()
     normalized_search_type = search_type.strip()
     normalized_search_value = search_value.strip()
+
+    if not normalized_user_id:
+        raise ValueError(
+            "사용자 아이디가 필요합니다."
+        )
 
     if not normalized_pos_no:
         raise ValueError(
@@ -36,6 +43,7 @@ async def search_patterns(
         )
 
     payload = {
+        "userId": normalized_user_id,
         "posNo": normalized_pos_no,
         "searchType": (
             None

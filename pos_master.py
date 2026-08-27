@@ -75,13 +75,21 @@ def normalize_pos_no_input(
 async def create_pos_master(
     *,
     target_url: str,
+    user_id: str,
     pos_no: str,
 ) -> dict[str, Any]:
+    normalized_user_id = user_id.strip()
+    if not normalized_user_id:
+        raise ValueError(
+            "사용자 아이디가 필요합니다."
+        )
+
     normalized_pos_no = normalize_pos_no_input(
         pos_no
     )
 
     payload = {
+        "userId": normalized_user_id,
         "posNo": normalized_pos_no,
     }
 

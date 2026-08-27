@@ -73,29 +73,47 @@ class _FakeConnection:
 
 class RefundDbContractTests(unittest.TestCase):
     def test_lookup_passes_all_four_original_transaction_keys(self):
-        with patch.object(db, "_fetch_rows", return_value=[]) as fetch:
-            db.fetch_refund_progress("210", "20260812", "0011", "000123")
+        with (
+            patch.object(db, "get_store_conn_str", return_value="store-connection") as connection_string,
+            patch.object(db, "_fetch_rows", return_value=[]) as fetch,
+        ):
+            db.fetch_refund_progress(
+                "210",
+                "20260812",
+                "0011",
+                "000123",
+                "220",
+            )
 
-        sql, params = fetch.call_args.args
+        sql, params, conn_str = fetch.call_args.args
         self.assertIn("FROM HDTRAN..TR_POS_TRANCALL_RFND", sql)
         for column in ("STORE_CD = ?", "SALE_DT = ?", "POS_NO = ?", "DEAL_NO = ?"):
             self.assertIn(column, sql)
         self.assertEqual(params, ("210", "20260812", "0011", "000123"))
+        self.assertEqual(conn_str, "store-connection")
+        connection_string.assert_called_once_with("220")
 
     def test_delete_uses_all_four_keys_and_commits(self):
         cursor = _FakeCursor(deleted=1)
         connection = _FakeConnection(cursor)
         with (
-            patch.object(db, "get_conn_str", return_value="connection-string"),
+            patch.object(db, "get_store_conn_str", return_value="store-connection") as connection_string,
             patch.object(db.pyodbc, "connect", return_value=connection),
         ):
-            deleted = db.delete_refund_progress("210", "20260812", "0011", "000123")
+            deleted = db.delete_refund_progress(
+                "210",
+                "20260812",
+                "0011",
+                "000123",
+                "220",
+            )
 
         self.assertEqual(deleted, 1)
         self.assertTrue(connection.committed)
         for column in ("STORE_CD = ?", "SALE_DT = ?", "POS_NO = ?", "DEAL_NO = ?"):
             self.assertIn(column, cursor.sql)
         self.assertEqual(cursor.params, ("210", "20260812", "0011", "000123"))
+        connection_string.assert_called_once_with("220")
 
 
 if __name__ == "__main__":
