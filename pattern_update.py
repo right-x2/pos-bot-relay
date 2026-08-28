@@ -8,6 +8,7 @@ async def update_pattern(
     *,
     target_url: str,
     user_id: str,
+    selected_store_code: str,
     pattern_group_code: str,
     pattern_code: str,
     pattern_value: str,
@@ -45,6 +46,7 @@ async def update_pattern(
 
     payload = {
         "userId": normalized_user_id,
+        "selectedStoreCode": selected_store_code.strip(),
         "patternGroupCode": normalized_group_code,
         "patternCode": normalized_pattern_code,
         "patternValue": normalized_pattern_value,

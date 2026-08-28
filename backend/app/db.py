@@ -573,6 +573,33 @@ def fetch_user_assigned_store_code(user_id: str) -> str | None:
     return str(row.ASSIGN_STORE_CD).strip() or None
 
 
+def fetch_user_authorized_store_codes(user_id: str) -> list[str]:
+    normalized_user_id = normalize_user_account_id(user_id)
+    if not normalized_user_id:
+        return []
+
+    sql = """
+    SELECT DISTINCT
+        NULLIF(LTRIM(RTRIM(STORE_CD)), '') AS STORE_CD
+    FROM HBHBO.dbo.SYS_USER_STR_AUTH
+    WHERE USER_ID = ?
+      AND NULLIF(LTRIM(RTRIM(STORE_CD)), '') IS NOT NULL
+    ORDER BY STORE_CD
+    """
+
+    with pyodbc.connect(get_conn_str()) as conn:
+        cur = conn.cursor()
+        rows = cur.execute(sql, normalized_user_id).fetchall()
+
+    store_codes: list[str] = []
+    for row in rows:
+        value = getattr(row, "STORE_CD", None)
+        normalized = str(value or "").strip()
+        if normalized and normalized not in store_codes:
+            store_codes.append(normalized)
+    return store_codes
+
+
 def fetch_refund_progress(
     store_cd: str,
     sale_dt: str,

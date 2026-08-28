@@ -76,6 +76,7 @@ async def create_pos_master(
     *,
     target_url: str,
     user_id: str,
+    selected_store_code: str,
     pos_no: str,
 ) -> dict[str, Any]:
     normalized_user_id = user_id.strip()
@@ -90,6 +91,7 @@ async def create_pos_master(
 
     payload = {
         "userId": normalized_user_id,
+        "selectedStoreCode": selected_store_code.strip(),
         "posNo": normalized_pos_no,
     }
 

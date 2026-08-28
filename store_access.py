@@ -4,34 +4,21 @@ from typing import Any
 import aiohttp
 
 
-async def request_refund_operation(
+async def fetch_store_access(
     *,
     target_url: str,
     user_id: str,
-    selected_store_code: str,
-    store_code: str,
-    sale_date: str,
-    pos_no: str,
-    deal_no: str,
 ) -> dict[str, Any]:
     normalized_user_id = user_id.strip()
     if not normalized_user_id:
         raise ValueError("사용자 아이디가 필요합니다.")
 
-    payload = {
-        "userId": normalized_user_id,
-        "selectedStoreCode": selected_store_code.strip(),
-        "storeCode": store_code.strip(),
-        "saleDate": sale_date.strip(),
-        "posNo": pos_no.strip(),
-        "dealNo": deal_no.strip(),
-    }
-    if not all(payload.values()):
-        raise ValueError("점코드, 영업일자, POS번호, 거래번호가 모두 필요합니다.")
-
-    timeout = aiohttp.ClientTimeout(total=60)
+    timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(target_url, json=payload) as response:
+        async with session.post(
+            target_url,
+            json={"userId": normalized_user_id},
+        ) as response:
             response_text = await response.text()
             status_code = response.status
 

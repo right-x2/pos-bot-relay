@@ -8,6 +8,7 @@ async def search_items(
     *,
     target_url: str,
     user_id: str,
+    selected_store_code: str,
     item_type: str,
     code: str = "",
     image_bytes: Optional[bytes] = None,
@@ -42,6 +43,11 @@ async def search_items(
     form.add_field(
         "userId",
         normalized_user_id,
+        content_type="text/plain",
+    )
+    form.add_field(
+        "selectedStoreCode",
+        selected_store_code.strip(),
         content_type="text/plain",
     )
     form.add_field(

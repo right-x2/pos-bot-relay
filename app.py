@@ -21,6 +21,7 @@ from faq_questions import fetch_top_faq_questions
 from pattern_search import search_patterns
 from pattern_update import update_pattern
 from refund_status import request_refund_operation
+from store_access import fetch_store_access
 from pos_master import (
     create_pos_master,
     normalize_pos_no_input,
@@ -66,6 +67,16 @@ TOOL_PATTERN_UPDATE = "pattern_update"
 TOOL_REFUND_STATUS = "refund_status"
 TOOL_FAMILY_SALE_SALES = "family_sale_sales"
 TOOL_GENERAL_CHAT = "general_chat"
+
+STORE_ROUTED_TOOLS = {
+    TOOL_POS_MASTER_CREATE,
+    TOOL_PRODUCT_SEARCH,
+    TOOL_PRODUCT_LOOKUP,
+    TOOL_SINGLE_PRODUCT_LOOKUP,
+    TOOL_PATTERN_SEARCH,
+    TOOL_PATTERN_UPDATE,
+    TOOL_REFUND_STATUS,
+}
 
 TOOL_TITLES = {
     TOOL_POS_MASTER_CREATE: "POS 마스터 생성",
@@ -150,6 +161,11 @@ class Config:
     POS_MASTER_API_URL = os.getenv(
         "POS_MASTER_API_URL",
         "http://123.111.174.78:30002/tools/create_pos_master",
+    )
+
+    STORE_ACCESS_API_URL = os.getenv(
+        "STORE_ACCESS_API_URL",
+        "http://123.111.174.78:30002/tools/store_access",
     )
 
     PATTERN_SEARCH_API_URL = os.getenv(
@@ -340,6 +356,61 @@ def adaptive_attachment(card: dict) -> Attachment:
         content_type="application/vnd.microsoft.card.adaptive",
         content=card,
     )
+
+
+def create_store_access_elements(
+    store_access: dict,
+    *,
+    selectable: bool = True,
+) -> list[dict]:
+    assigned_store_code = str(
+        store_access.get("assignedStoreCode", "") or ""
+    ).strip()
+    accessible_store_codes = [
+        str(value).strip()
+        for value in store_access.get("accessibleStoreCodes", [])
+        if str(value).strip()
+    ]
+
+    elements = [
+        {
+            "type": "FactSet",
+            "facts": [
+                {
+                    "title": "내 기본점포",
+                    "value": assigned_store_code or "-",
+                },
+                {
+                    "title": "권한점포",
+                    "value": ", ".join(accessible_store_codes) or "-",
+                },
+            ],
+        }
+    ]
+    if selectable:
+        elements.append(
+            {
+                "type": "Input.ChoiceSet",
+                "id": "selected_store_code",
+                "label": "작업 점포",
+                "style": "compact",
+                "value": assigned_store_code,
+                "choices": [
+                    {
+                        "title": (
+                            f"{store_code} (기본점포)"
+                            if store_code == assigned_store_code
+                            else store_code
+                        ),
+                        "value": store_code,
+                    }
+                    for store_code in accessible_store_codes
+                ],
+                "isRequired": True,
+                "errorMessage": "작업할 점포를 선택해주세요.",
+            }
+        )
+    return elements
 
 
 def create_tool_menu_card() -> Attachment:
@@ -555,7 +626,9 @@ def create_top_faq_questions_card(
     return adaptive_attachment(card)
 
 
-def create_product_search_tool_menu_card() -> Attachment:
+def create_product_search_tool_menu_card(
+    store_access: Optional[dict] = None,
+) -> Attachment:
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -574,7 +647,11 @@ def create_product_search_tool_menu_card() -> Attachment:
                 "isSubtle": True,
                 "wrap": True,
             },
-        ],
+        ] + (
+            create_store_access_elements(store_access, selectable=False)
+            if store_access
+            else []
+        ),
         "actions": [
             {
                 "type": "Action.Submit",
@@ -607,6 +684,7 @@ def create_product_search_tool_menu_card() -> Attachment:
 
 def create_product_search_input_card(
     tool_name: str,
+    store_access: Optional[dict] = None,
 ) -> Attachment:
     code_label = (
         "상품코드"
@@ -629,12 +707,17 @@ def create_product_search_input_card(
             {
                 "type": "TextBlock",
                 "text": (
-                    f"{code_label}를 입력하거나, 5분 안에 "
-                    "Teams 채팅창에서 바코드 이미지를 첨부해주세요."
+                    f"{code_label}를 입력해 검색할 수 있습니다. 바코드는 점포를 "
+                    "고른 뒤 '바코드 이미지 검색 준비'를 누르고 5분 안에 첨부해주세요."
                 ),
                 "wrap": True,
                 "isSubtle": True,
             },
+        ] + (
+            create_store_access_elements(store_access)
+            if store_access
+            else []
+        ) + [
             {
                 "type": "Input.Text",
                 "id": "search_code",
@@ -650,6 +733,14 @@ def create_product_search_input_card(
                 "style": "positive",
                 "data": {
                     "action": "product_search_code_submit",
+                    "tool": tool_name,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "바코드 이미지 검색 준비",
+                "data": {
+                    "action": "product_search_prepare_image",
                     "tool": tool_name,
                 },
             },
@@ -894,7 +985,9 @@ def create_product_search_result_card(
     return adaptive_attachment(card)
 
 
-def create_pos_master_form_card() -> Attachment:
+def create_pos_master_form_card(
+    store_access: Optional[dict] = None,
+) -> Attachment:
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -916,6 +1009,11 @@ def create_pos_master_form_card() -> Attachment:
                 "isSubtle": True,
                 "wrap": True,
             },
+        ] + (
+            create_store_access_elements(store_access)
+            if store_access
+            else []
+        ) + [
             {
                 "type": "Input.Text",
                 "id": "pos_no",
@@ -949,7 +1047,9 @@ def create_pos_master_form_card() -> Attachment:
     return adaptive_attachment(card)
 
 
-def create_pattern_search_form_card() -> Attachment:
+def create_pattern_search_form_card(
+    store_access: Optional[dict] = None,
+) -> Attachment:
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -971,6 +1071,11 @@ def create_pattern_search_form_card() -> Attachment:
                 "isSubtle": True,
                 "wrap": True,
             },
+        ] + (
+            create_store_access_elements(store_access)
+            if store_access
+            else []
+        ) + [
             {
                 "type": "Input.Text",
                 "id": "pos_no",
@@ -1035,7 +1140,9 @@ def create_pattern_search_form_card() -> Attachment:
     return adaptive_attachment(card)
 
 
-def create_pattern_update_form_card() -> Attachment:
+def create_pattern_update_form_card(
+    store_access: Optional[dict] = None,
+) -> Attachment:
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -1054,6 +1161,11 @@ def create_pattern_update_form_card() -> Attachment:
                 "isSubtle": True,
                 "wrap": True,
             },
+        ] + (
+            create_store_access_elements(store_access)
+            if store_access
+            else []
+        ) + [
             {
                 "type": "Input.Text",
                 "id": "pattern_group_code",
@@ -1106,7 +1218,9 @@ def create_pattern_update_form_card() -> Attachment:
     return adaptive_attachment(card)
 
 
-def create_refund_status_form_card() -> Attachment:
+def create_refund_status_form_card(
+    store_access: Optional[dict] = None,
+) -> Attachment:
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -1125,6 +1239,11 @@ def create_refund_status_form_card() -> Attachment:
                 "isSubtle": True,
                 "wrap": True,
             },
+        ] + (
+            create_store_access_elements(store_access)
+            if store_access
+            else []
+        ) + [
             {
                 "type": "Input.Text",
                 "id": "store_code",
@@ -1211,6 +1330,9 @@ def create_refund_status_result_card(response_json: dict) -> Attachment:
         )
 
     actions = []
+    selected_store_code = str(
+        response_json.get("assignedStoreCode") or ""
+    )
     if found:
         actions.append(
             {
@@ -1224,6 +1346,7 @@ def create_refund_status_result_card(response_json: dict) -> Attachment:
                     "sale_date": str(original.get("saleDate") or ""),
                     "pos_no": str(original.get("posNo") or ""),
                     "deal_no": str(original.get("dealNo") or ""),
+                    "selected_store_code": selected_store_code,
                 },
             }
         )
@@ -1958,6 +2081,7 @@ def create_pattern_search_result_card(
                     "pos_no": pos_no,
                     "search_type": search_type,
                     "search_value": search_value,
+                    "selected_store_code": store_code,
                     "page": page - 1,
                 },
             }
@@ -1974,6 +2098,7 @@ def create_pattern_search_result_card(
                     "pos_no": pos_no,
                     "search_type": search_type,
                     "search_value": search_value,
+                    "selected_store_code": store_code,
                     "page": page + 1,
                 },
             }
@@ -2764,10 +2889,65 @@ class RelayBot(ActivityHandler):
             create_tool_menu_card(),
         )
 
+    async def get_store_access_for_user(
+        self,
+        turn_context: TurnContext,
+    ) -> Optional[dict]:
+        teams_account_id, _ = await get_teams_account(turn_context)
+        if not teams_account_id:
+            await turn_context.send_activity(
+                "Teams 계정 아이디를 확인하지 못해 점포 권한을 조회할 수 없습니다."
+            )
+            return None
+
+        try:
+            api_result = await fetch_store_access(
+                target_url=CONFIG.STORE_ACCESS_API_URL,
+                user_id=teams_account_id,
+            )
+        except Exception as error:
+            print(
+                "[STORE ACCESS API ERROR]"
+                f" type={type(error).__name__} message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            await turn_context.send_activity(
+                "점포 권한 조회 중 오류가 발생했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+            return None
+
+        status_code = int(api_result.get("status", 0) or 0)
+        response_text = str(api_result.get("response_text", ""))
+        response_json = api_result.get("response_json")
+        if not isinstance(response_json, dict):
+            response_json = {}
+
+        accessible_store_codes = response_json.get("accessibleStoreCodes")
+        if (
+            status_code != 200
+            or response_json.get("ok") is not True
+            or not isinstance(accessible_store_codes, list)
+            or not accessible_store_codes
+        ):
+            message = str(
+                response_json.get("message")
+                or response_text
+                or "사용 가능한 시범점포가 없습니다."
+            )
+            await turn_context.send_activity(
+                "점포 권한을 확인하지 못했습니다.\n\n"
+                f"HTTP 상태: {status_code}\n내용: {message}"
+            )
+            return None
+        return response_json
+
     def set_pending_search_tool(
         self,
         turn_context: TurnContext,
         tool_name: str,
+        selected_store_code: str,
     ) -> None:
         session_key = get_tool_session_key(
             turn_context.activity
@@ -2775,6 +2955,7 @@ class RelayBot(ActivityHandler):
 
         PENDING_SEARCH_CACHE[session_key] = {
             "tool": tool_name,
+            "selected_store_code": selected_store_code,
             "expires_at": (
                 datetime.now(KST)
                 + PENDING_SEARCH_TTL
@@ -2831,6 +3012,14 @@ class RelayBot(ActivityHandler):
             return ""
 
         return tool_name
+
+    def get_pending_search_store_code(
+        self,
+        turn_context: TurnContext,
+    ) -> str:
+        session_key = get_tool_session_key(turn_context.activity)
+        pending = PENDING_SEARCH_CACHE.get(session_key) or {}
+        return str(pending.get("selected_store_code", "") or "").strip()
 
     def clear_pending_search_tool(
         self,
@@ -2958,26 +3147,34 @@ class RelayBot(ActivityHandler):
             submit_value.get("tool", "")
         ).strip()
 
+        store_access = None
+        if tool_name in STORE_ROUTED_TOOLS:
+            store_access = await self.get_store_access_for_user(turn_context)
+            if store_access is None:
+                return
+
         if tool_name == TOOL_POS_MASTER_CREATE:
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_pos_master_form_card()
+            attachment = create_pos_master_form_card(store_access)
         elif tool_name == TOOL_PRODUCT_SEARCH:
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_product_search_tool_menu_card()
+            attachment = create_product_search_tool_menu_card(store_access)
         elif tool_name in (
             TOOL_PRODUCT_LOOKUP,
             TOOL_SINGLE_PRODUCT_LOOKUP,
         ):
             self.set_pending_search_tool(
                 turn_context,
-                tool_name
+                tool_name,
+                str(store_access.get("assignedStoreCode", "")),
             )
             attachment = create_product_search_input_card(
-                tool_name
+                tool_name,
+                store_access,
             )
         elif tool_name == TOOL_GENERAL_CHAT:
             self.clear_pending_search_tool(
@@ -2988,17 +3185,17 @@ class RelayBot(ActivityHandler):
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_pattern_search_form_card()
+            attachment = create_pattern_search_form_card(store_access)
         elif tool_name == TOOL_PATTERN_UPDATE:
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_pattern_update_form_card()
+            attachment = create_pattern_update_form_card(store_access)
         elif tool_name == TOOL_REFUND_STATUS:
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_refund_status_form_card()
+            attachment = create_refund_status_form_card(store_access)
         elif tool_name == TOOL_FAMILY_SALE_SALES:
             self.clear_pending_search_tool(turn_context)
             attachment = create_family_sale_form_card()
@@ -3030,6 +3227,9 @@ class RelayBot(ActivityHandler):
         search_code = str(
             submit_value.get("search_code", "")
         ).strip()
+        selected_store_code = str(
+            submit_value.get("selected_store_code", "")
+        ).strip()
 
         if tool_name not in (
             TOOL_PRODUCT_LOOKUP,
@@ -3052,6 +3252,10 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        if not selected_store_code:
+            await turn_context.send_activity("작업할 점포를 선택해주세요.")
+            return
+
         if len(search_code) > 100:
             await turn_context.send_activity(
                 f"{code_label}는 100자 이하로 입력해주세요."
@@ -3061,6 +3265,7 @@ class RelayBot(ActivityHandler):
         await self.execute_product_search(
             turn_context,
             tool_name=tool_name,
+            selected_store_code=selected_store_code,
             search_code=search_code,
             update_source=isinstance(
                 turn_context.activity.value,
@@ -3068,10 +3273,35 @@ class RelayBot(ActivityHandler):
             ),
         )
 
+    async def handle_product_search_prepare_image(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        tool_name = str(submit_value.get("tool", "")).strip()
+        selected_store_code = str(
+            submit_value.get("selected_store_code", "")
+        ).strip()
+        if tool_name not in (TOOL_PRODUCT_LOOKUP, TOOL_SINGLE_PRODUCT_LOOKUP):
+            await turn_context.send_activity("올바르지 않은 검색 도구입니다.")
+            return
+        if not selected_store_code:
+            await turn_context.send_activity("작업할 점포를 선택해주세요.")
+            return
+        self.set_pending_search_tool(
+            turn_context,
+            tool_name,
+            selected_store_code,
+        )
+        await turn_context.send_activity(
+            f"{selected_store_code}점으로 검색합니다. 5분 안에 바코드 이미지를 첨부해주세요."
+        )
+
     async def handle_product_search_image(
         self,
         turn_context: TurnContext,
         tool_name: str,
+        selected_store_code: str,
         attachments: list[Attachment],
     ) -> None:
         image_attachments = [
@@ -3091,6 +3321,7 @@ class RelayBot(ActivityHandler):
         await self.execute_product_search(
             turn_context,
             tool_name=tool_name,
+            selected_store_code=selected_store_code,
             image_attachment=image_attachments[0],
             update_source=False,
         )
@@ -3100,6 +3331,7 @@ class RelayBot(ActivityHandler):
         turn_context: TurnContext,
         *,
         tool_name: str,
+        selected_store_code: str,
         search_code: str = "",
         image_attachment: Optional[Attachment] = None,
         update_source: bool = False,
@@ -3157,6 +3389,7 @@ class RelayBot(ActivityHandler):
             api_result = await search_items(
                 target_url=CONFIG.ITEM_SEARCH_API_URL,
                 user_id=teams_account_id,
+                selected_store_code=selected_store_code,
                 item_type=item_type,
                 code=search_code,
                 image_bytes=image_bytes,
@@ -3265,6 +3498,12 @@ class RelayBot(ActivityHandler):
         pos_no = str(
             submit_value.get("pos_no", "")
         ).strip()
+        selected_store_code = str(
+            submit_value.get("selected_store_code", "")
+        ).strip()
+        if not selected_store_code:
+            await turn_context.send_activity("작업할 점포를 선택해주세요.")
+            return
 
         try:
             normalized_pos_no = (
@@ -3306,6 +3545,7 @@ class RelayBot(ActivityHandler):
             api_result = await create_pos_master(
                 target_url=CONFIG.POS_MASTER_API_URL,
                 user_id=teams_account_id,
+                selected_store_code=selected_store_code,
                 pos_no=normalized_pos_no,
             )
 
@@ -3409,6 +3649,12 @@ class RelayBot(ActivityHandler):
         search_value = str(
             submit_value.get("search_value", "")
         ).strip()
+        selected_store_code = str(
+            submit_value.get("selected_store_code", "")
+        ).strip()
+        if not selected_store_code:
+            await turn_context.send_activity("작업할 점포를 선택해주세요.")
+            return
 
         try:
             page = int(
@@ -3485,6 +3731,7 @@ class RelayBot(ActivityHandler):
             api_result = await search_patterns(
                 target_url=CONFIG.PATTERN_SEARCH_API_URL,
                 user_id=teams_account_id,
+                selected_store_code=selected_store_code,
                 pos_no=pos_no,
                 search_type=search_type,
                 search_value=search_value,
@@ -3589,6 +3836,12 @@ class RelayBot(ActivityHandler):
                 "",
             )
         ).strip()
+        selected_store_code = str(
+            submit_value.get("selected_store_code", "")
+        ).strip()
+        if not selected_store_code:
+            await turn_context.send_activity("작업할 점포를 선택해주세요.")
+            return
 
         required_fields = (
             (
@@ -3654,6 +3907,7 @@ class RelayBot(ActivityHandler):
                     CONFIG.PATTERN_UPDATE_API_URL
                 ),
                 user_id=teams_account_id,
+                selected_store_code=selected_store_code,
                 pattern_group_code=(
                     pattern_group_code
                 ),
@@ -3762,6 +4016,12 @@ class RelayBot(ActivityHandler):
         sale_date = str(submit_value.get("sale_date", "")).strip()
         pos_no = str(submit_value.get("pos_no", "")).strip()
         deal_no = str(submit_value.get("deal_no", "")).strip()
+        selected_store_code = str(
+            submit_value.get("selected_store_code", "")
+        ).strip()
+        if not selected_store_code:
+            await turn_context.send_activity("작업할 점포를 선택해주세요.")
+            return
 
         labels = (
             (store_code, "점코드를 입력해주세요."),
@@ -3817,6 +4077,7 @@ class RelayBot(ActivityHandler):
             api_result = await request_refund_operation(
                 target_url=target_url,
                 user_id=teams_account_id,
+                selected_store_code=selected_store_code,
                 store_code=store_code,
                 sale_date=normalized_sale_date,
                 pos_no=pos_no,
@@ -4519,6 +4780,7 @@ class RelayBot(ActivityHandler):
             await self.handle_product_search_image(
                 turn_context,
                 pending_search_tool,
+                self.get_pending_search_store_code(turn_context),
                 attachments,
             )
             return
@@ -4888,6 +5150,13 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        if action == "product_search_prepare_image":
+            await self.handle_product_search_prepare_image(
+                turn_context,
+                submit_value,
+            )
+            return
+
         if action in (
             "pattern_search_submit",
             "pattern_search_page",
@@ -5009,13 +5278,9 @@ class RelayBot(ActivityHandler):
             "pos마스터생성",
             "포스마스터생성",
         }:
-            self.clear_pending_search_tool(
-                turn_context
-            )
-            await turn_context.send_activity(
-                MessageFactory.attachment(
-                    create_pos_master_form_card()
-                )
+            await self.handle_tool_select(
+                turn_context,
+                {"tool": TOOL_POS_MASTER_CREATE},
             )
             return
 
@@ -5023,13 +5288,9 @@ class RelayBot(ActivityHandler):
             "상단품검색",
             "상품단품검색",
         }:
-            self.clear_pending_search_tool(
-                turn_context
-            )
-            await turn_context.send_activity(
-                MessageFactory.attachment(
-                    create_product_search_tool_menu_card()
-                )
+            await self.handle_tool_select(
+                turn_context,
+                {"tool": TOOL_PRODUCT_SEARCH},
             )
             return
 
@@ -5037,24 +5298,16 @@ class RelayBot(ActivityHandler):
             "패턴조회",
             "패턴검색",
         }:
-            self.clear_pending_search_tool(
-                turn_context
-            )
-            await turn_context.send_activity(
-                MessageFactory.attachment(
-                    create_pattern_search_form_card()
-                )
+            await self.handle_tool_select(
+                turn_context,
+                {"tool": TOOL_PATTERN_SEARCH},
             )
             return
 
         if compact_command == "패턴수정":
-            self.clear_pending_search_tool(
-                turn_context
-            )
-            await turn_context.send_activity(
-                MessageFactory.attachment(
-                    create_pattern_update_form_card()
-                )
+            await self.handle_tool_select(
+                turn_context,
+                {"tool": TOOL_PATTERN_UPDATE},
             )
             return
 
@@ -5062,13 +5315,9 @@ class RelayBot(ActivityHandler):
             "반품상태조회",
             "반품조회",
         }:
-            self.clear_pending_search_tool(
-                turn_context
-            )
-            await turn_context.send_activity(
-                MessageFactory.attachment(
-                    create_refund_status_form_card()
-                )
+            await self.handle_tool_select(
+                turn_context,
+                {"tool": TOOL_REFUND_STATUS},
             )
             return
 

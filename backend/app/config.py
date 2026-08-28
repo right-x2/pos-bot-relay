@@ -23,7 +23,7 @@ class Settings:
         "260": os.getenv("STORE_DB_SERVER_260", "10.18.200.4"),
         "420": os.getenv("STORE_DB_SERVER_420", "10.46.200.4"),
         "720": os.getenv("STORE_DB_SERVER_720", "10.153.200.4"),
-        "780": os.getenv("STORE_DB_SERVER_780", "10.192.200.4"),
+        "750": os.getenv("STORE_DB_SERVER_750", "10.192.200.4"),
     }
 
     FAMILY_SALE_DB_DRIVER = os.getenv("FAMILY_SALE_DB_DRIVER", DB_DRIVER)

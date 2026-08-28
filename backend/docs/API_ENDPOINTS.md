@@ -17,6 +17,7 @@
 | POST | `/api/faqs/top-questions` | 카테고리별 `FILLER1` 가중치 상위 FAQ 질문 조회 |
 | POST | `/api/items/search` | 상품·단품 조회 및 사용/행사 상태 판정 |
 | GET | `/api/health` | 헬스체크 |
+| POST | `/tools/store_access` | 사용자 기본점포 및 업무 권한점포 조회 |
 | POST | `/tools/create_pos_master` | POS 마스터 상태 갱신용 도구 API |
 | POST | `/tools/pattern_lookup` | POS 패턴 그룹/상세 조회용 도구 API |
 | POST | `/tools/pattern_update` | POS 패턴 상세값 수정용 도구 API |
@@ -65,15 +66,16 @@
 ### Teams 계정 기준 점포 DB 라우팅
 
 - POS 마스터, 상·단품 조회, 패턴 조회·수정, 반품 상태조회·취소 요청은 Teams UPN/이메일의 `@` 앞부분을 `userId`로 전달한다.
-- 백엔드는 중앙 DB의 `HDHBO..SYS_USER_MST`에서 `USER_ID = userId`로 `ASSIGN_STORE_CD`를 조회한다.
-- 업무 쿼리는 `ASSIGN_STORE_CD`에 매핑된 점포 DB 서버에서 실행한다. 사용자나 배정 점코드를 찾지 못하거나 지원하지 않는 점코드이면 다른 DB로 대체하지 않고 오류를 반환한다.
+- 백엔드는 중앙 DB의 `HDHBO..SYS_USER_MST`에서 `USER_ID = userId`로 기본점포 `ASSIGN_STORE_CD`를 조회하고, `HBHBO..SYS_USER_STR_AUTH`에서 추가 권한점포 `STORE_CD`를 조회한다.
+- 시범점포는 `220`, `260`, `420`, `720`, `750`이다. 기본점포는 항상 사용 가능하고 추가 권한점포는 Teams 카드에서 작업 점포로 선택할 수 있다.
+- Teams가 전달한 `selectedStoreCode`는 백엔드에서 다시 권한 검증한다. 값이 없으면 기본점포를 사용하며, 권한이 없거나 지원하지 않는 점포이면 다른 DB로 대체하지 않고 오류를 반환한다.
 - FAQ/RAG, FAQ 등록·승인, 한섬패밀리세일 전용 조회의 연결 방식은 변경하지 않는다.
 
 ### 상·단품 판정 규칙
 
 `/api/items/search`가 조회 결과를 찾으면 `diagnosis`에 아래 판정 근거를 함께 반환한다.
 
-요청은 `multipart/form-data`이며 `userId`(Teams 이메일 앞부분)와 `상단품구분`(`상품` 또는 `단품`)이 필수다. `코드` 또는 `바코드이미지` 중 하나를 함께 전달하며, `userId`로 선택한 점포 DB에서 조회한다.
+요청은 `multipart/form-data`이며 `userId`(Teams 이메일 앞부분), `selectedStoreCode`(선택 작업점포), `상단품구분`(`상품` 또는 `단품`)을 전달한다. `코드` 또는 `바코드이미지` 중 하나를 함께 전달하며, 권한 검증을 통과한 점포 DB에서 조회한다.
 
 - `사용여부`: `USE_YN`이 `1/Y/YES/TRUE/T`이면 사용 가능, `0/N/NO/FALSE/F`이면 사용 불가로 판정한다. 그 밖의 값과 미설정 값은 확인 필요로 판정한다.
 - `행사`: 단품의 가격 행사(`PRC_EVT_*`), N+N 행사(`NN_EVT_*`), 대상 행사(`TRGT_EVT_*_1`~`5`)를 각각 확인한다. 행사 관련 값이 하나라도 있으면 설정된 행사로 본다.
@@ -92,6 +94,7 @@
 ```json
 {
   "userId": "kimjungwoo",
+  "selectedStoreCode": "220",
   "storeCode": "210",
   "saleDate": "20260812",
   "posNo": "1111",
@@ -99,7 +102,7 @@
 }
 ```
 
-- `userId`로 확인한 배정 점포 DB에 연결한 뒤 `HDTRAN..TR_POS_TRANCALL_RFND`에서 `STORE_CD`, `SALE_DT`, `POS_NO`, `DEAL_NO`가 모두 일치하는 데이터를 찾는다.
+- `selectedStoreCode`의 사용자 권한을 확인한 뒤 해당 점포 DB에 연결하고 `HDTRAN..TR_POS_TRANCALL_RFND`에서 `STORE_CD`, `SALE_DT`, `POS_NO`, `DEAL_NO`가 모두 일치하는 데이터를 찾는다.
 - 조회되면 `SET_STORE_CD`, `SET_SALE_DT`, `SET_POS_NO`를 현재 반품 진행 위치로 반환한다.
 - 취소는 동일한 네 개 조건으로 반품 진행 데이터를 삭제하며, 삭제 대상이 없으면 `deleted`가 `0`이다.
 
@@ -574,7 +577,8 @@ POS 마스터 상태를 갱신하는 내부 도구 API다.
 ```json
 {
   "posNo": "1111,1112",
-  "userId": "kimjungwoo"
+  "userId": "kimjungwoo",
+  "selectedStoreCode": "220"
 }
 ```
 
@@ -583,6 +587,7 @@ POS 마스터 상태를 갱신하는 내부 도구 API다.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `userId` | string | Y | Teams 이메일 앞부분. `SYS_USER_MST.ASSIGN_STORE_CD` 조회에 사용 |
+| `selectedStoreCode` | string | N | 작업 점포. 생략하면 기본점포 사용, 전달하면 권한 검증 |
 | `posNo` | string | Y | POS 번호. `1111`, `1111,1112`, `1111~1200`, `1111-1200` 형식 지원 |
 
 허용 예시:
@@ -628,7 +633,7 @@ POS 마스터 상태를 갱신하는 내부 도구 API다.
 
 메모:
 
-- `userId`로 조회한 `ASSIGN_STORE_CD`가 업데이트 조건과 점포 DB 연결 선택에 함께 적용된다.
+- 권한 검증을 통과한 `selectedStoreCode`가 업데이트 조건과 점포 DB 연결 선택에 함께 적용된다.
 
 ### 3.9 POST `/tools/pattern_lookup`
 
@@ -639,6 +644,7 @@ POS 기준 패턴 그룹과 패턴 상세 목록을 조회하는 내부 도구 A
 ```json
 {
   "userId": "kimjungwoo",
+  "selectedStoreCode": "220",
   "posNo": "1111",
   "searchType": null,
   "searchValue": null,
@@ -653,6 +659,7 @@ POS 기준 패턴 그룹과 패턴 상세 목록을 조회하는 내부 도구 A
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `userId` | string | Y | Teams 이메일 앞부분. `SYS_USER_MST.ASSIGN_STORE_CD` 조회에 사용 |
+| `selectedStoreCode` | string | N | 작업 점포. 생략하면 기본점포 사용, 전달하면 권한 검증 |
 | `posNo` | string | Y | POS 번호 |
 | `searchType` | string \| null | N | `null`이면 전체조회 |
 | `searchValue` | string \| null | N | `searchType`이 `0` 또는 `1`일 때만 사용 |
@@ -704,6 +711,7 @@ POS 패턴 상세값을 수정하는 도구 API다.
 ```json
 {
   "userId": "kimjungwoo",
+  "selectedStoreCode": "220",
   "patternGroupCode": "1001",
   "patternCode": "0001",
   "patternValue": "2"
@@ -715,6 +723,7 @@ POS 패턴 상세값을 수정하는 도구 API다.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `userId` | string | Y | 수정 요청자 ID. `SYS_USER_MST.ASSIGN_STORE_CD` 조회에 사용 |
+| `selectedStoreCode` | string | N | 작업 점포. 생략하면 기본점포 사용, 전달하면 권한 검증 |
 | `patternGroupCode` | string | Y | 패턴 그룹 코드 |
 | `patternCode` | string | Y | 패턴 코드 |
 | `patternValue` | string | Y | 수정할 패턴값 |
@@ -733,7 +742,7 @@ POS 패턴 상세값을 수정하는 도구 API다.
 }
 ```
 
-수정 SQL에는 요청자의 `ASSIGN_STORE_CD`가 `STORE_CD` 조건으로 적용되고, 해당 점포에 매핑된 DB 서버로 연결한다.
+수정 SQL에는 권한 검증을 통과한 작업 점포가 `STORE_CD` 조건으로 적용되고, 해당 점포에 매핑된 DB 서버로 연결한다.
 사용자 또는 배정 점코드를 찾을 수 없으면 패턴을 수정하지 않는다.
 
 실패 응답 예시:

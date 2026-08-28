@@ -23,6 +23,7 @@ from app.db import (
     fetch_item_master_by_code,
     fetch_plu_master_by_code,
     fetch_refund_progress,
+    fetch_user_authorized_store_codes,
     fetch_user_assigned_store_code,
     get_store_db_server,
     get_post_request_by_key,
@@ -232,6 +233,7 @@ class CreatePosMasterRequest(BaseModel):
     posNo: str | None = None
     posKnd: str | None = None
     userId: str
+    selectedStoreCode: str | None = None
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -245,6 +247,7 @@ class CreatePosMasterRequest(BaseModel):
 
 class PatternLookupRequest(BaseModel):
     userId: str
+    selectedStoreCode: str | None = None
     posNo: str
     searchType: str | None = None
     searchValue: str | None = None
@@ -265,6 +268,7 @@ class PatternLookupRequest(BaseModel):
 
 class PatternUpdateRequest(BaseModel):
     userId: str
+    selectedStoreCode: str | None = None
     patternGroupCode: str
     patternCode: str
     patternValue: str
@@ -283,6 +287,7 @@ class PatternUpdateRequest(BaseModel):
 
 class RefundStatusRequest(BaseModel):
     userId: str
+    selectedStoreCode: str | None = None
     storeCode: str
     saleDate: str
     posNo: str
@@ -320,6 +325,10 @@ class FamilySaleSalesRequest(BaseModel):
             }
         }
     )
+
+
+class ToolStoreAccessRequest(BaseModel):
+    userId: str
 
 
 def _normalize_refund_key(req: RefundStatusRequest) -> tuple[str, str, str, str]:
@@ -471,7 +480,7 @@ class ToolStoreResolutionError(ValueError):
         self.status_code = status_code
 
 
-def _resolve_tool_store_code(user_id: str | None) -> str:
+def _get_tool_store_access(user_id: str | None) -> dict:
     normalized_user_id = _empty_to_none(user_id)
     if normalized_user_id is None:
         raise ToolStoreResolutionError(
@@ -480,8 +489,8 @@ def _resolve_tool_store_code(user_id: str | None) -> str:
             400,
         )
 
-    store_cd = fetch_user_assigned_store_code(normalized_user_id)
-    if store_cd is None:
+    assigned_store_cd = fetch_user_assigned_store_code(normalized_user_id)
+    if assigned_store_cd is None:
         raise ToolStoreResolutionError(
             "사용자의 배정 점코드를 찾을 수 없습니다.",
             "ASSIGNED_STORE_NOT_FOUND",
@@ -489,7 +498,7 @@ def _resolve_tool_store_code(user_id: str | None) -> str:
         )
 
     try:
-        get_store_db_server(store_cd)
+        get_store_db_server(assigned_store_cd)
     except ValueError as error:
         raise ToolStoreResolutionError(
             str(error),
@@ -497,7 +506,41 @@ def _resolve_tool_store_code(user_id: str | None) -> str:
             400,
         ) from error
 
-    return store_cd
+    authorized_store_codes = fetch_user_authorized_store_codes(normalized_user_id)
+    accessible_store_codes = []
+    for store_cd in [assigned_store_cd, *authorized_store_codes]:
+        if store_cd in accessible_store_codes:
+            continue
+        try:
+            get_store_db_server(store_cd)
+        except ValueError:
+            continue
+        accessible_store_codes.append(store_cd)
+
+    return {
+        "userId": normalized_user_id,
+        "assignedStoreCode": assigned_store_cd,
+        "authorizedStoreCodes": authorized_store_codes,
+        "accessibleStoreCodes": accessible_store_codes,
+    }
+
+
+def _resolve_tool_store_code(
+    user_id: str | None,
+    selected_store_cd: str | None = None,
+) -> str:
+    access = _get_tool_store_access(user_id)
+    selected = _empty_to_none(selected_store_cd)
+    if selected is None:
+        return access["assignedStoreCode"]
+
+    if selected not in access["accessibleStoreCodes"]:
+        raise ToolStoreResolutionError(
+            f"선택한 {selected}점에 대한 사용자 권한이 없습니다.",
+            "STORE_ACCESS_DENIED",
+            403,
+        )
+    return selected
 
 
 def _tool_store_error_response(error: ToolStoreResolutionError) -> JSONResponse:
@@ -508,6 +551,31 @@ def _tool_store_error_response(error: ToolStoreResolutionError) -> JSONResponse:
             "message": str(error),
             "errorCode": error.error_code,
         },
+        media_type="application/json; charset=utf-8",
+    )
+
+
+@app.post("/tools/store_access")
+def tool_store_access(req: ToolStoreAccessRequest, request: Request):
+    try:
+        access = _get_tool_store_access(req.userId)
+    except ToolStoreResolutionError as error:
+        _log_api_step(
+            request,
+            "store_access_failed",
+            error_code=error.error_code,
+        )
+        return _tool_store_error_response(error)
+
+    _log_api_step(
+        request,
+        "store_access_resolved",
+        user_id=access["userId"],
+        assigned_store_cd=access["assignedStoreCode"],
+        accessible_store_codes=",".join(access["accessibleStoreCodes"]),
+    )
+    return JSONResponse(
+        content={"ok": True, **access},
         media_type="application/json; charset=utf-8",
     )
 
@@ -1225,7 +1293,7 @@ def create_pos_master_tool(req: CreatePosMasterRequest, request: Request):
         )
 
     try:
-        store_cd = _resolve_tool_store_code(req.userId)
+        store_cd = _resolve_tool_store_code(req.userId, req.selectedStoreCode)
     except ToolStoreResolutionError as error:
         _log_api_step(
             request,
@@ -1334,7 +1402,7 @@ def pattern_update_tool(req: PatternUpdateRequest, request: Request):
             )
 
         try:
-            store_cd = _resolve_tool_store_code(user_id)
+            store_cd = _resolve_tool_store_code(user_id, req.selectedStoreCode)
         except ToolStoreResolutionError as error:
             _log_api_step(
                 request,
@@ -1451,7 +1519,7 @@ def pattern_lookup_tool(req: PatternLookupRequest, request: Request):
             )
 
         try:
-            store_cd = _resolve_tool_store_code(user_id)
+            store_cd = _resolve_tool_store_code(user_id, req.selectedStoreCode)
         except ToolStoreResolutionError as error:
             _log_api_step(
                 request,
@@ -1569,7 +1637,10 @@ def refund_status_tool(req: RefundStatusRequest, request: Request):
         )
 
     try:
-        assigned_store_cd = _resolve_tool_store_code(req.userId)
+        assigned_store_cd = _resolve_tool_store_code(
+            req.userId,
+            req.selectedStoreCode,
+        )
     except ToolStoreResolutionError as error:
         _log_api_step(
             request,
@@ -1755,7 +1826,10 @@ def refund_cancel_tool(req: RefundStatusRequest, request: Request):
         )
 
     try:
-        assigned_store_cd = _resolve_tool_store_code(req.userId)
+        assigned_store_cd = _resolve_tool_store_code(
+            req.userId,
+            req.selectedStoreCode,
+        )
     except ToolStoreResolutionError as error:
         _log_api_step(
             request,
@@ -2268,13 +2342,14 @@ def get_top_faq_questions(req: TopFaqQuestionsRequest, request: Request):
 async def search_item_api(
     request: Request,
     userId: str = Form(..., alias="userId"),
+    selectedStoreCode: str = Form("", alias="selectedStoreCode"),
     itemType: str = Form(..., alias="상단품구분"),
     code: str = Form("", alias="코드"),
     barcodeImage: UploadFile | None = File(None, alias="바코드이미지"),
 ):
     try:
         try:
-            store_cd = _resolve_tool_store_code(userId)
+            store_cd = _resolve_tool_store_code(userId, selectedStoreCode)
         except ToolStoreResolutionError as error:
             _log_api_step(
                 request,

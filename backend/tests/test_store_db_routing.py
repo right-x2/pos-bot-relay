@@ -48,6 +48,21 @@ class _AssignedStoreCursor:
         return SimpleNamespace(ASSIGN_STORE_CD=self.assigned_store_cd)
 
 
+class _AuthorizedStoreCursor:
+    def __init__(self, store_codes):
+        self.store_codes = store_codes
+        self.sql = ""
+        self.params = ()
+
+    def execute(self, sql, *params):
+        self.sql = sql
+        self.params = params
+        return self
+
+    def fetchall(self):
+        return [SimpleNamespace(STORE_CD=value) for value in self.store_codes]
+
+
 class _Connection:
     def __init__(self, cursor):
         self._cursor = cursor
@@ -75,7 +90,7 @@ class StoreDbRoutingTests(unittest.TestCase):
                 "260": "10.18.200.4",
                 "420": "10.46.200.4",
                 "720": "10.153.200.4",
-                "780": "10.192.200.4",
+                "750": "10.192.200.4",
             },
         )
 
@@ -91,7 +106,7 @@ class StoreDbRoutingTests(unittest.TestCase):
             "260": "10.18.200.4",
             "420": "10.46.200.4",
             "720": "10.153.200.4",
-            "780": "10.192.200.4",
+            "750": "10.192.200.4",
         }
         for store_cd, server in expected.items():
             self.assertEqual(db.get_store_db_server(store_cd), server)
@@ -118,6 +133,22 @@ class StoreDbRoutingTests(unittest.TestCase):
         self.assertEqual(cursor.params, ("rightx2",))
         central.assert_called_once_with()
         connect.assert_called_once_with("central-connection")
+
+    def test_authorized_store_lookup_uses_auth_table_and_deduplicates(self):
+        cursor = _AuthorizedStoreCursor(["220", "750", "750"])
+        connection = _Connection(cursor)
+        with (
+            patch.object(db, "get_conn_str", return_value="central-connection"),
+            patch.object(db.pyodbc, "connect", return_value=connection),
+        ):
+            store_codes = db.fetch_user_authorized_store_codes(
+                "rightx2@hyundaifuturenet.co.kr"
+            )
+
+        self.assertEqual(store_codes, ["220", "750"])
+        self.assertIn("HBHBO.dbo.SYS_USER_STR_AUTH", cursor.sql)
+        self.assertIn("STORE_CD", cursor.sql)
+        self.assertEqual(cursor.params, ("rightx2",))
 
 
 if __name__ == "__main__":

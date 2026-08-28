@@ -56,9 +56,9 @@ python .\scripts\verify_runtime.py --chroma-smoke
 
 ### Teams 계정 기준 점포 DB 선택
 
-POS 마스터, 상·단품 조회, 패턴 조회·수정, 반품 상태조회·취소는 Teams 계정의 이메일 앞부분을 `userId`로 받습니다. 백엔드는 중앙 DB의 `HDHBO..SYS_USER_MST`에서 `USER_ID`가 일치하는 사용자의 `ASSIGN_STORE_CD`를 조회한 뒤 해당 점포 DB에 연결합니다.
+POS 마스터, 상·단품 조회, 패턴 조회·수정, 반품 상태조회·취소는 Teams 계정의 이메일 앞부분을 `userId`로 받습니다. 백엔드는 중앙 DB의 `HDHBO..SYS_USER_MST`에서 기본점포(`ASSIGN_STORE_CD`)를, `HBHBO..SYS_USER_STR_AUTH`에서 추가 권한점포(`STORE_CD`)를 조회합니다. Teams에서 선택한 `selectedStoreCode`는 백엔드에서 이 권한 목록과 다시 대조하며, 선택값이 없으면 기본점포를 사용합니다.
 
-점포 DB 공통 계정은 `STORE_DB_USER`, `STORE_DB_PASSWORD`에 입력하고 점포별 서버는 `STORE_DB_SERVER_220`, `STORE_DB_SERVER_260`, `STORE_DB_SERVER_420`, `STORE_DB_SERVER_720`, `STORE_DB_SERVER_780`으로 관리합니다. 지원 목록에 없는 점코드이거나 배정 점코드를 찾지 못하면 기본 DB로 우회하지 않고 도구 요청을 거부합니다.
+시범점포는 `220`, `260`, `420`, `720`, `750`입니다. 점포 DB 공통 계정은 `STORE_DB_USER`, `STORE_DB_PASSWORD`에 입력하고 점포별 서버는 `STORE_DB_SERVER_220`, `STORE_DB_SERVER_260`, `STORE_DB_SERVER_420`, `STORE_DB_SERVER_720`, `STORE_DB_SERVER_750`으로 관리합니다. 지원 목록에 없거나 권한이 없는 점포는 다른 DB로 우회하지 않고 도구 요청을 거부합니다.
 
 FAQ/RAG와 계정 조회는 기존 `DB_*` 연결을 사용하며, 한섬패밀리세일 조회는 기존 `FAMILY_SALE_DB_*` 전용 연결을 그대로 사용합니다.
 

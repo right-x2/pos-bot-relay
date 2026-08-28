@@ -8,6 +8,7 @@ async def search_patterns(
     *,
     target_url: str,
     user_id: str,
+    selected_store_code: str,
     pos_no: str,
     search_type: str,
     search_value: str,
@@ -44,6 +45,7 @@ async def search_patterns(
 
     payload = {
         "userId": normalized_user_id,
+        "selectedStoreCode": selected_store_code.strip(),
         "posNo": normalized_pos_no,
         "searchType": (
             None
