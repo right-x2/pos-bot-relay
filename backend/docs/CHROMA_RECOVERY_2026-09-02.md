@@ -69,6 +69,17 @@ python .\scripts\reindex_all_safe.py
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
+## 소규모 Windows 저장소 긴급 우회
+
+현재 승인 FAQ 98건은 새 컬렉션을 `hnsw:batch_size=1000`,
+`hnsw:sync_threshold=1000`으로 생성하여 Chroma의 brute-force 버퍼에 유지한다.
+장애 화면에서 10번째 upsert에 프로세스가 종료된 것은 기존 `batch_size=10` 경계와
+일치하므로, 이 설정은 네이티브 HNSW 승격을 뒤로 미뤄 Windows 충돌 경로를 피한다.
+
+컬렉션 metadata는 생성 후 변경되지 않으므로 기존 `CHROMA_DIR`에는 효과가 없다.
+반드시 위 복구 절차처럼 사용하지 않은 새 `CHROMA_DIR`로 전체 재색인한다. 데이터가
+1000건에 가까워지기 전에 Linux Chroma 서버로 이전하거나 임계값을 재검토해야 한다.
+
 ## 금지 사항
 
 - 손상된 `chroma_0811`에 `--allow-existing`을 사용하지 않는다.

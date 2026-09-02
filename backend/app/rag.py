@@ -34,8 +34,12 @@ _CHROMA_OPERATION_LOCK = threading.RLock()
 
 _CHROMA_COLLECTION_METADATA = {
     "hnsw:space": "cosine",
-    "hnsw:batch_size": 10,
-    "hnsw:sync_threshold": 100,
+    # Chroma 0.5.23/chroma-hnswlib 0.7.6 can terminate the Windows process
+    # when a batch is promoted into the native HNSW index.  The current FAQ
+    # corpus is small, so keep it in Chroma's brute-force buffer and defer
+    # native HNSW promotion.  This metadata only applies to new collections.
+    "hnsw:batch_size": 1000,
+    "hnsw:sync_threshold": 1000,
 }
 
 

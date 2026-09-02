@@ -63,8 +63,8 @@ class ImageRagTests(unittest.TestCase):
             "pos_faq",
             metadata={
                 "hnsw:space": "cosine",
-                "hnsw:batch_size": 10,
-                "hnsw:sync_threshold": 100,
+                "hnsw:batch_size": 1000,
+                "hnsw:sync_threshold": 1000,
             },
         )
 
