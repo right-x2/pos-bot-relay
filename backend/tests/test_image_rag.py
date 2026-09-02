@@ -2,7 +2,7 @@ import sys
 import types
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 chromadb_stub = types.ModuleType("chromadb")
@@ -45,6 +45,29 @@ VISION_ANALYSIS = (
 
 
 class ImageRagTests(unittest.TestCase):
+    def test_new_collection_uses_cosine_and_bounded_hnsw_batches(self):
+        client = Mock()
+        client.get_collection.side_effect = type(
+            "InvalidCollectionException",
+            (Exception,),
+            {},
+        )("missing")
+        expected_collection = Mock()
+        client.create_collection.return_value = expected_collection
+
+        with patch.object(rag, "get_chroma_client", return_value=client):
+            collection = rag.get_collection(create=True)
+
+        self.assertIs(collection, expected_collection)
+        client.create_collection.assert_called_once_with(
+            "pos_faq",
+            metadata={
+                "hnsw:space": "cosine",
+                "hnsw:batch_size": 10,
+                "hnsw:sync_threshold": 100,
+            },
+        )
+
     def test_image_context_without_faq_returns_not_found(self):
         with patch.object(rag, "search_faq", return_value=[]):
             result = rag.ask_rag(

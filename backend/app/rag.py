@@ -3,6 +3,7 @@ import hashlib
 import logging
 import re
 import sqlite3
+import threading
 import time
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -24,6 +25,19 @@ from app.db import increment_faq_counts
 # process at INFO level.
 logger = logging.getLogger("uvicorn.error")
 
+# Chroma 0.5.x uses a native HNSW index. FastAPI sync endpoints run in a
+# threadpool, so FAQ approval, Confluence publishing, and searches can reach
+# the same native index concurrently. Keep every in-process Chroma operation
+# on a single lane. This cannot repair an already damaged index; recovery must
+# still rebuild into a new CHROMA_DIR.
+_CHROMA_OPERATION_LOCK = threading.RLock()
+
+_CHROMA_COLLECTION_METADATA = {
+    "hnsw:space": "cosine",
+    "hnsw:batch_size": 10,
+    "hnsw:sync_threshold": 100,
+}
+
 
 @lru_cache(maxsize=1)
 def get_chroma_client():
@@ -37,12 +51,24 @@ def get_chroma_client():
 
 
 def get_collection(create: bool = False):
-    chroma_client = get_chroma_client()
+    with _CHROMA_OPERATION_LOCK:
+        chroma_client = get_chroma_client()
 
-    if create:
-        return chroma_client.get_or_create_collection(settings.CHROMA_COLLECTION)
+        if not create:
+            return chroma_client.get_collection(settings.CHROMA_COLLECTION)
 
-    return chroma_client.get_collection(settings.CHROMA_COLLECTION)
+        try:
+            return chroma_client.get_collection(settings.CHROMA_COLLECTION)
+        except Exception as error:
+            if type(error).__name__ not in {
+                "InvalidCollectionException",
+                "NotFoundError",
+            }:
+                raise
+            return chroma_client.create_collection(
+                settings.CHROMA_COLLECTION,
+                metadata=_CHROMA_COLLECTION_METADATA,
+            )
 
 
 def _get_tombstone_db_path() -> Path:
@@ -224,20 +250,25 @@ def upsert_faq_vector(record: dict) -> dict:
         "content_hash": _make_content_hash(content),
     }
 
-    collection = get_collection(create=True)
-    if timing_on:
-        t_now = time.perf_counter()
-        _log_timing("get_collection", t_now - t_mark, collection=settings.CHROMA_COLLECTION)
-        t_mark = t_now
+    with _CHROMA_OPERATION_LOCK:
+        collection = get_collection(create=True)
+        if timing_on:
+            t_now = time.perf_counter()
+            _log_timing(
+                "get_collection",
+                t_now - t_mark,
+                collection=settings.CHROMA_COLLECTION,
+            )
+            t_mark = t_now
 
-    collection.upsert(
-        ids=[doc_id],
-        documents=[content],
-        embeddings=[embedding],
-        metadatas=[metadata],
-    )
-    # A later approval/upsert restores a previously removed FAQ.
-    _clear_doc_id_deleted(doc_id)
+        collection.upsert(
+            ids=[doc_id],
+            documents=[content],
+            embeddings=[embedding],
+            metadatas=[metadata],
+        )
+        # A later approval/upsert restores a previously removed FAQ.
+        _clear_doc_id_deleted(doc_id)
     if timing_on:
         t_now = time.perf_counter()
         _log_timing("upsert", t_now - t_mark, doc_id=doc_id)
@@ -299,12 +330,7 @@ def delete_faq_vector_by_key(
 
 
 def search_faq(question: str, top_k: int = 4) -> list[dict]:
-    collection = get_collection()
     deleted_doc_ids = _get_deleted_doc_ids()
-
-    collection_count = collection.count()
-    if collection_count <= 0:
-        return []
 
     logger.info(
         "[rag-search] embedding_input chars=%s text=%r",
@@ -313,16 +339,22 @@ def search_faq(question: str, top_k: int = 4) -> list[dict]:
     )
     q_emb = embed_text(question)
 
-    fetch_count = min(
-        collection_count,
-        max(top_k, top_k + len(deleted_doc_ids)),
-    )
+    with _CHROMA_OPERATION_LOCK:
+        collection = get_collection()
+        collection_count = collection.count()
+        if collection_count <= 0:
+            return []
 
-    result = collection.query(
-        query_embeddings=[q_emb],
-        n_results=fetch_count,
-        include=["documents", "metadatas", "distances"]
-    )
+        fetch_count = min(
+            collection_count,
+            max(top_k, top_k + len(deleted_doc_ids)),
+        )
+
+        result = collection.query(
+            query_embeddings=[q_emb],
+            n_results=fetch_count,
+            include=["documents", "metadatas", "distances"]
+        )
 
     ids = result.get("ids", [[]])[0]
     docs = result.get("documents", [[]])[0]

@@ -11,7 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.config import settings
 from app.db import load_pos_faq_df
-from app.rag import upsert_faq_vector
+from app.rag import get_collection, upsert_faq_vector
 
 
 def _to_record(row) -> dict:
@@ -44,16 +44,31 @@ def main() -> None:
 
     target = _validate_clean_target(args.allow_existing)
     print(f"CHROMA_DIR: {target}")
-    print("[1/3] 승인 FAQ 조회")
+    print("[1/4] 승인 FAQ 조회")
     df = load_pos_faq_df()
     print(f"FAQ count: {len(df)}")
 
-    print("[2/3] 삭제 없이 upsert")
+    print("[2/4] 신규 cosine 컬렉션 생성")
+    collection = get_collection(create=True)
+    metadata = collection.metadata or {}
+    if metadata.get("hnsw:space") != "cosine":
+        raise RuntimeError(
+            "New collection is not configured for cosine distance: "
+            f"metadata={metadata}"
+        )
+
+    print("[3/4] 삭제 없이 upsert")
     for index, (_, row) in enumerate(df.iterrows(), start=1):
         result = upsert_faq_vector(_to_record(row))
         print(f"{index}/{len(df)} {result['doc_id']}")
 
-    print("[3/3] 완료")
+    actual_count = collection.count()
+    if actual_count != len(df):
+        raise RuntimeError(
+            f"Reindex count mismatch: expected={len(df)}, actual={actual_count}"
+        )
+
+    print("[4/4] 완료")
     print(f"Reindexed {len(df)} FAQs into {target}")
 
 

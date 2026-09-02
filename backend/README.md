@@ -5,6 +5,7 @@ FastAPI, SQL Server, Azure OpenAI와 ChromaDB를 사용하는 POS FAQ/RAG 백엔
 ## 소스 동기화 이력
 
 - 2026-08-27 내부 서버 반출본 비교 결과: [`docs/SOURCE_SYNC_2026-08-27.md`](docs/SOURCE_SYNC_2026-08-27.md)
+- 2026-09-02 Windows HNSW 장애 진단·복구: [`docs/CHROMA_RECOVERY_2026-09-02.md`](docs/CHROMA_RECOVERY_2026-09-02.md)
 
 ## 기준 환경
 
