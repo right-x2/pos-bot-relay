@@ -6,6 +6,7 @@ $RegisterUrl = "http://10.103.201.164:8000/api/posts/request"
 $ImageChatUrl = "http://10.103.201.164:8000/api/rag/image-chat"
 $FeedbackUrl = "http://10.103.201.164:8000/api/logs/help-yn"
 $ItemSearchUrl = "http://10.103.201.164:8000/api/items/search"
+$StoreAccessUrl = "http://10.103.201.164:8000/tools/store_access"
 $PosMasterUrl = "http://10.103.201.164:8000/tools/create_pos_master"
 $PatternSearchUrl = "http://10.103.201.164:8000/tools/pattern_lookup"
 $PatternUpdateUrl = "http://10.103.201.164:8000/tools/pattern_update"
@@ -148,6 +149,7 @@ try {
                     imageUrl = $ImageChatUrl
                     feedbackUrl = $FeedbackUrl
                     itemSearchUrl = $ItemSearchUrl
+                    storeAccessUrl = $StoreAccessUrl
                     posMasterUrl = $PosMasterUrl
                     patternSearchUrl = $PatternSearchUrl
                     patternUpdateUrl = $PatternUpdateUrl
@@ -271,11 +273,24 @@ try {
                     requestTime = [string]$Incoming.requestTime
                 } | ConvertTo-Json -Depth 20 -Compress
             }
+            elseif ($Path -eq "/tools/store_access") {
+                $TargetUrl = $StoreAccessUrl
+
+                $UserId = ([string]$Incoming.userId).Trim()
+                if ([string]::IsNullOrWhiteSpace($UserId)) {
+                    throw "Missing userId"
+                }
+
+                $ForwardBody = [ordered]@{
+                    userId = $UserId
+                } | ConvertTo-Json -Depth 20 -Compress
+            }
             elseif ($Path -eq "/tools/create_pos_master") {
                 $TargetUrl = $PosMasterUrl
 
                 $PosNo = ([string]$Incoming.posNo).Trim()
                 $UserId = ([string]$Incoming.userId).Trim()
+                $SelectedStoreCode = ([string]$Incoming.selectedStoreCode).Trim()
 
                 if ([string]::IsNullOrWhiteSpace($UserId)) {
                     throw "Missing userId"
@@ -322,6 +337,7 @@ try {
 
                 $PosMasterPayload = [ordered]@{
                     userId = $UserId
+                    selectedStoreCode = $SelectedStoreCode
                     posNo = $PosNo
                 }
 
@@ -332,6 +348,7 @@ try {
                 $TargetUrl = $PatternSearchUrl
 
                 $UserId = ([string]$Incoming.userId).Trim()
+                $SelectedStoreCode = ([string]$Incoming.selectedStoreCode).Trim()
                 $PosNo = [string]$Incoming.posNo
                 $SearchType = [string]$Incoming.searchType
                 $SearchValue = [string]$Incoming.searchValue
@@ -365,6 +382,7 @@ try {
 
                 $ForwardBody = [ordered]@{
                     userId = $UserId
+                    selectedStoreCode = $SelectedStoreCode
                     posNo = $PosNo.Trim()
                     searchType = $ForwardSearchType
                     searchValue = $SearchValue.Trim()
@@ -378,6 +396,7 @@ try {
                 $PatternCode = [string]$Incoming.patternCode
                 $PatternValue = [string]$Incoming.patternValue
                 $UserId = [string]$Incoming.userId
+                $SelectedStoreCode = ([string]$Incoming.selectedStoreCode).Trim()
 
                 if ([string]::IsNullOrWhiteSpace($UserId)) {
                     throw "Missing userId"
@@ -397,6 +416,7 @@ try {
 
                 $ForwardBody = [ordered]@{
                     userId = $UserId.Trim()
+                    selectedStoreCode = $SelectedStoreCode
                     patternGroupCode = $PatternGroupCode.Trim()
                     patternCode = $PatternCode.Trim()
                     patternValue = $PatternValue.Trim()
@@ -415,6 +435,7 @@ try {
 
                 $StoreCode = ([string]$Incoming.storeCode).Trim()
                 $UserId = ([string]$Incoming.userId).Trim()
+                $SelectedStoreCode = ([string]$Incoming.selectedStoreCode).Trim()
                 $SaleDate = ([string]$Incoming.saleDate).Trim()
                 $PosNo = ([string]$Incoming.posNo).Trim()
                 $DealNo = ([string]$Incoming.dealNo).Trim()
@@ -437,6 +458,7 @@ try {
 
                 $ForwardBody = [ordered]@{
                     userId = $UserId
+                    selectedStoreCode = $SelectedStoreCode
                     storeCode = $StoreCode
                     saleDate = $SaleDate
                     posNo = $PosNo
