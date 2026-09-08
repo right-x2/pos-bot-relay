@@ -120,7 +120,11 @@ class StoreDbRoutingTests(unittest.TestCase):
         cursor = _AssignedStoreCursor("220")
         connection = _Connection(cursor)
         with (
-            patch.object(db, "get_conn_str", return_value="central-connection") as central,
+            patch.object(
+                db,
+                "get_central_conn_str",
+                return_value="central-connection",
+            ) as central,
             patch.object(db.pyodbc, "connect", return_value=connection) as connect,
         ):
             store_cd = db.fetch_user_assigned_store_code(
@@ -138,7 +142,11 @@ class StoreDbRoutingTests(unittest.TestCase):
         cursor = _AuthorizedStoreCursor(["220", "750", "750"])
         connection = _Connection(cursor)
         with (
-            patch.object(db, "get_conn_str", return_value="central-connection"),
+            patch.object(
+                db,
+                "get_central_conn_str",
+                return_value="central-connection",
+            ),
             patch.object(db.pyodbc, "connect", return_value=connection),
         ):
             store_codes = db.fetch_user_authorized_store_codes(

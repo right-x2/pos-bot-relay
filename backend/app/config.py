@@ -13,6 +13,15 @@ class Settings:
     DB_PASSWORD = os.getenv("DB_PASSWORD")
     DB_TRUST_CERT = os.getenv("DB_TRUST_CERT", "yes")
 
+    # User master and store authorization tables always live on the central
+    # HBO SQL Server.  Keep this separate from store-routed business DBs.
+    CENTRAL_DB_SERVER = os.getenv("CENTRAL_DB_SERVER") or "10.103.201.164"
+    CENTRAL_DB_DATABASE = os.getenv("CENTRAL_DB_DATABASE") or "HDHBO"
+    CENTRAL_DB_DRIVER = os.getenv("CENTRAL_DB_DRIVER") or DB_DRIVER
+    CENTRAL_DB_USER = os.getenv("CENTRAL_DB_USER") or DB_USER
+    CENTRAL_DB_PASSWORD = os.getenv("CENTRAL_DB_PASSWORD") or DB_PASSWORD
+    CENTRAL_DB_TRUST_CERT = os.getenv("CENTRAL_DB_TRUST_CERT") or DB_TRUST_CERT
+
     STORE_DB_DRIVER = os.getenv("STORE_DB_DRIVER", DB_DRIVER)
     STORE_DB_DATABASE = os.getenv("STORE_DB_DATABASE", DB_DATABASE)
     STORE_DB_USER = os.getenv("STORE_DB_USER", DB_USER)

@@ -21,6 +21,17 @@ def get_conn_str() -> str:
     )
 
 
+def get_central_conn_str() -> str:
+    return (
+        f"DRIVER={{{settings.CENTRAL_DB_DRIVER}}};"
+        f"SERVER={settings.CENTRAL_DB_SERVER};"
+        f"DATABASE={settings.CENTRAL_DB_DATABASE};"
+        f"UID={settings.CENTRAL_DB_USER};"
+        f"PWD={settings.CENTRAL_DB_PASSWORD};"
+        f"TrustServerCertificate={settings.CENTRAL_DB_TRUST_CERT};"
+    )
+
+
 def normalize_user_account_id(user_id: str | None) -> str:
     normalized = str(user_id or "").strip()
     if "@" in normalized:
@@ -564,7 +575,7 @@ def fetch_user_assigned_store_code(user_id: str) -> str | None:
     WHERE USER_ID = ?
     """
 
-    with pyodbc.connect(get_conn_str()) as conn:
+    with pyodbc.connect(get_central_conn_str()) as conn:
         cur = conn.cursor()
         row = cur.execute(sql, normalized_user_id).fetchone()
 
@@ -587,7 +598,7 @@ def fetch_user_authorized_store_codes(user_id: str) -> list[str]:
     ORDER BY STORE_CD
     """
 
-    with pyodbc.connect(get_conn_str()) as conn:
+    with pyodbc.connect(get_central_conn_str()) as conn:
         cur = conn.cursor()
         rows = cur.execute(sql, normalized_user_id).fetchall()
 
