@@ -4698,11 +4698,16 @@ class RelayBot(ActivityHandler):
                 "errorCode"
             )
 
+            auto_approved = (
+                result.get("autoApproved") is True
+                or result.get("approvalStatus") == "APPROVED"
+                or "즉시 승인" in result_message
+            )
             approval_status_label = str(
                 result.get("approvalStatusLabel")
                 or (
                     "자동 승인 완료"
-                    if result.get("autoApproved") is True
+                    if auto_approved
                     else "관리자 승인 대기"
                 )
             ).strip()
