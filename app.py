@@ -476,14 +476,6 @@ def create_tool_menu_card() -> Attachment:
             },
             {
                 "type": "Action.Submit",
-                "title": "2026 한섬패밀리세일 매출조회",
-                "data": {
-                    "action": "tool_select",
-                    "tool": TOOL_FAMILY_SALE_SALES,
-                },
-            },
-            {
-                "type": "Action.Submit",
                 "title": "일반 질문",
                 "data": {
                     "action": "tool_select",
