@@ -361,14 +361,20 @@ def _error_response(message: str, error_code: str, status_code: int = 400):
     )
 
 
-def _success_response(request_id: int, message: str):
+def _success_response(
+    request_id: int,
+    message: str,
+    **extra_content,
+):
+    content = {
+        "success": True,
+        "requestId": request_id,
+        "message": message,
+        "errorCode": None,
+    }
+    content.update(extra_content)
     return JSONResponse(
-        content={
-            "success": True,
-            "requestId": request_id,
-            "message": message,
-            "errorCode": None,
-        },
+        content=content,
         media_type="application/json; charset=utf-8",
     )
 
@@ -950,9 +956,18 @@ def register_post_request(req: PostRequest, request: Request):
             return _success_response(
                 record_id,
                 f"게시글이 즉시 승인되어 벡터에 반영되었고 알림 {notification_count}건이 등록되었습니다.",
+                autoApproved=True,
+                approvalStatus="APPROVED",
+                approvalStatusLabel="자동 승인 완료",
             )
 
-        return _success_response(record_id, "게시글이 승인대기 상태로 등록되었습니다.")
+        return _success_response(
+            record_id,
+            "게시글이 승인대기 상태로 등록되었습니다.",
+            autoApproved=False,
+            approvalStatus="PENDING",
+            approvalStatusLabel="관리자 승인 대기",
+        )
 
     except Exception:
         traceback.print_exc()

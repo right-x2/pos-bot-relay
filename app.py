@@ -2534,6 +2534,7 @@ def create_register_result_card(
     question: str = "",
     request_id: object = None,
     message: str = "",
+    approval_status_label: str = "관리자 승인 대기",
 ) -> Attachment:
     if success:
         body = [
@@ -2562,7 +2563,7 @@ def create_register_result_card(
                     },
                     {
                         "title": "상태",
-                        "value": "관리자 승인 대기",
+                        "value": approval_status_label,
                     },
                 ],
             },
@@ -4697,6 +4698,15 @@ class RelayBot(ActivityHandler):
                 "errorCode"
             )
 
+            approval_status_label = str(
+                result.get("approvalStatusLabel")
+                or (
+                    "자동 승인 완료"
+                    if result.get("autoApproved") is True
+                    else "관리자 승인 대기"
+                )
+            ).strip()
+
             if status_code == 200 and success:
                 completed_card = (
                     create_register_result_card(
@@ -4708,6 +4718,7 @@ class RelayBot(ActivityHandler):
                         question=question,
                         request_id=result_request_id,
                         message=result_message,
+                        approval_status_label=approval_status_label,
                     )
                 )
 
