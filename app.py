@@ -87,7 +87,7 @@ TOOL_TITLES = {
     TOOL_PATTERN_UPDATE: "패턴 수정",
     TOOL_REFUND_STATUS: "반품 상태조회",
     TOOL_FAMILY_SALE_SALES: "2026 한섬패밀리세일 매출조회",
-    TOOL_GENERAL_CHAT: "일반 질문",
+    TOOL_GENERAL_CHAT: "카테고리별 FAQ",
 }
 
 ITEM_RESULT_FIELDS = (
@@ -476,7 +476,7 @@ def create_tool_menu_card() -> Attachment:
             },
             {
                 "type": "Action.Submit",
-                "title": "일반 질문",
+                "title": "카테고리별 FAQ",
                 "data": {
                     "action": "tool_select",
                     "tool": TOOL_GENERAL_CHAT,
@@ -496,7 +496,7 @@ def create_general_category_card() -> Attachment:
         "body": [
             {
                 "type": "TextBlock",
-                "text": "일반 질문",
+                "text": "카테고리별 FAQ",
                 "weight": "Bolder",
                 "size": "Medium",
                 "wrap": True,
