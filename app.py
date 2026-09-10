@@ -766,6 +766,10 @@ def create_product_search_result_card(
     )
     result = response_json.get("result")
     diagnosis = response_json.get("diagnosis")
+    notice = str(
+        response_json.get("notice", "")
+        or ""
+    ).strip()
 
     if not isinstance(result, dict):
         result = {}
@@ -925,6 +929,19 @@ def create_product_search_result_card(
             },
         ]
 
+    notice_blocks = []
+    if notice:
+        notice_blocks = [
+            {
+                "type": "TextBlock",
+                "text": f"※ {notice}",
+                "wrap": True,
+                "isSubtle": True,
+                "spacing": "Medium",
+                "separator": True,
+            }
+        ]
+
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -953,6 +970,7 @@ def create_product_search_result_card(
                 "spacing": "Medium",
             },
             *diagnosis_blocks,
+            *notice_blocks,
         ],
         "actions": [
             {
