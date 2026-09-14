@@ -37,6 +37,7 @@ from botbuilder.integration.aiohttp import (
 )
 from botbuilder.schema import (
     Activity,
+    AdaptiveCardInvokeResponse,
     Attachment,
     ChannelAccount,
     InvokeResponse,
@@ -4935,14 +4936,14 @@ class RelayBot(ActivityHandler):
         if not action:
             return InvokeResponse(
                 status=400,
-                body={
-                    "statusCode": 400,
-                    "type": "application/vnd.microsoft.error",
-                    "value": {
-                    "code": "BadRequest",
-                    "message": "Missing card action",
+                body=AdaptiveCardInvokeResponse(
+                    status_code=400,
+                    type="application/vnd.microsoft.error",
+                    value={
+                        "code": "BadRequest",
+                        "message": "Missing card action",
                     },
-                },
+                ),
             )
 
         print(
@@ -4975,11 +4976,11 @@ class RelayBot(ActivityHandler):
             # client shows its own opaque "문제가 발생했습니다" dialog.
             return InvokeResponse(
                 status=200,
-                body={
-                    "statusCode": 200,
-                    "type": "application/vnd.microsoft.activity.message",
-                    "value": "요청 처리가 완료되었습니다.",
-                },
+                body=AdaptiveCardInvokeResponse(
+                    status_code=200,
+                    type="application/vnd.microsoft.activity.message",
+                    value="요청 처리가 완료되었습니다.",
+                ),
             )
 
         print(
@@ -4988,11 +4989,11 @@ class RelayBot(ActivityHandler):
         )
         return InvokeResponse(
             status=200,
-            body={
-                "statusCode": 200,
-                "type": "application/vnd.microsoft.activity.message",
-                "value": "처리가 완료되었습니다.",
-            },
+            body=AdaptiveCardInvokeResponse(
+                status_code=200,
+                type="application/vnd.microsoft.activity.message",
+                value="처리가 완료되었습니다.",
+            ),
         )
 
     async def on_message_activity(
