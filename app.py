@@ -346,6 +346,28 @@ def normalize_adaptive_card_for_teams_mobile(node) -> None:
         if node.get("type") == "Action.Submit":
             node.pop("associatedInputs", None)
 
+            action_data = node.get("data")
+            if isinstance(action_data, dict):
+                action_name = str(
+                    action_data.get("action", "") or ""
+                ).strip()
+                if action_name:
+                    # Teams Android is more reliable when Action.Submit is
+                    # explicitly identified as a Teams messageBack action.
+                    # Keep the original top-level data so Adaptive Card input
+                    # values continue to be merged into activity.value.
+                    teams_action = action_data.get("msteams")
+                    if not isinstance(teams_action, dict):
+                        teams_action = {}
+                        action_data["msteams"] = teams_action
+
+                    teams_action.setdefault("type", "messageBack")
+                    teams_action.setdefault(
+                        "displayText",
+                        str(node.get("title", "") or action_name),
+                    )
+                    teams_action.setdefault("action", action_name)
+
         for key, value in list(node.items()):
             if not isinstance(value, list):
                 normalize_adaptive_card_for_teams_mobile(value)
@@ -376,6 +398,60 @@ def normalize_adaptive_card_for_teams_mobile(node) -> None:
     if isinstance(node, list):
         for value in node:
             normalize_adaptive_card_for_teams_mobile(value)
+
+
+def extract_card_submit_value(raw_value) -> dict:
+    """Normalize card payload variants sent by Teams desktop and mobile."""
+
+    def as_dict(value) -> dict:
+        if isinstance(value, dict):
+            return value
+        if not isinstance(value, str):
+            return {}
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    source = as_dict(raw_value)
+    if not source:
+        return {}
+
+    normalized: dict = {}
+
+    # Universal Action clients wrap values in value.action.data. Supporting
+    # this shape also makes mixed Teams client versions harmless.
+    wrapped_action = source.get("action")
+    if isinstance(wrapped_action, dict):
+        normalized.update(as_dict(wrapped_action.get("data")))
+
+        verb = str(wrapped_action.get("verb", "") or "").strip()
+        if verb and not normalized.get("action"):
+            normalized["action"] = verb
+
+    teams_action = source.get("msteams")
+    if isinstance(teams_action, dict):
+        normalized.update(as_dict(teams_action.get("value")))
+
+        teams_action_name = str(
+            teams_action.get("action", "") or ""
+        ).strip()
+        if teams_action_name and not normalized.get("action"):
+            normalized["action"] = teams_action_name
+
+    # Some Teams mobile builds put the custom value one level deeper.
+    normalized.update(as_dict(source.get("value")))
+
+    # Standard Action.Submit data and collected Input.* values live here.
+    for key, value in source.items():
+        if key == "msteams" or (
+            key == "action" and isinstance(value, dict)
+        ):
+            continue
+        normalized[key] = value
+
+    return normalized
 
 
 def allow_tool_menu_without_input_validation(node) -> None:
@@ -5188,11 +5264,18 @@ class RelayBot(ActivityHandler):
             return
         # ===== IMAGE POC GUARD V2 끝 =====
 
-        submit_value = (
+        submit_value = extract_card_submit_value(
             activity.value
-            if isinstance(activity.value, dict)
-            else {}
         )
+
+        if activity.value and not submit_value:
+            print(
+                "[CARD SUBMIT PAYLOAD UNRECOGNIZED]"
+                f" value_type={type(activity.value).__name__}"
+                f" value={str(activity.value)[:2000]}",
+                file=sys.stderr,
+                flush=True,
+            )
 
         action = str(
             submit_value.get("action", "")
