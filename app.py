@@ -330,8 +330,56 @@ def is_barcode_image_attachment(
     return False
 
 
+def normalize_adaptive_card_for_teams_mobile(node) -> None:
+    """Keep outgoing cards compatible with Teams mobile (Adaptive Card 1.2)."""
+    if isinstance(node, dict):
+        if node.get("type") == "AdaptiveCard":
+            node["version"] = "1.2"
+
+        if str(node.get("type", "")).startswith("Input."):
+            # Input labels and client-side required validation were added in
+            # Adaptive Card 1.3. Validation is also performed server-side.
+            node.pop("label", None)
+            node.pop("isRequired", None)
+            node.pop("errorMessage", None)
+
+        if node.get("type") == "Action.Submit":
+            node.pop("associatedInputs", None)
+
+        for key, value in list(node.items()):
+            if not isinstance(value, list):
+                normalize_adaptive_card_for_teams_mobile(value)
+                continue
+
+            normalized_items = []
+            for item in value:
+                if (
+                    isinstance(item, dict)
+                    and str(item.get("type", "")).startswith("Input.")
+                ):
+                    label = str(item.get("label", "") or "").strip()
+                    if label:
+                        required_mark = " *" if item.get("isRequired") else ""
+                        normalized_items.append(
+                            {
+                                "type": "TextBlock",
+                                "text": f"{label}{required_mark}",
+                                "wrap": True,
+                                "spacing": "Medium",
+                            }
+                        )
+                normalize_adaptive_card_for_teams_mobile(item)
+                normalized_items.append(item)
+            node[key] = normalized_items
+        return
+
+    if isinstance(node, list):
+        for value in node:
+            normalize_adaptive_card_for_teams_mobile(value)
+
+
 def allow_tool_menu_without_input_validation(node) -> None:
-    """Ensure navigation actions never validate required card inputs."""
+    """Retained for callers; mobile normalization removes 1.3 validation."""
     if isinstance(node, dict):
         action_data = node.get("data")
         if (
@@ -352,6 +400,7 @@ def allow_tool_menu_without_input_validation(node) -> None:
 
 def adaptive_attachment(card: dict) -> Attachment:
     allow_tool_menu_without_input_validation(card)
+    normalize_adaptive_card_for_teams_mobile(card)
     return Attachment(
         content_type="application/vnd.microsoft.card.adaptive",
         content=card,
@@ -2864,9 +2913,23 @@ class RelayBot(ActivityHandler):
             attachments=[attachment],
         )
 
-        await turn_context.update_activity(
-            updated_activity
-        )
+        try:
+            await turn_context.update_activity(
+                updated_activity
+            )
+        except Exception as error:
+            # Teams mobile can provide a reply_to_id that cannot be updated.
+            # Falling back to a new card prevents the client from showing only
+            # the generic "Something went wrong" message.
+            print(
+                "[CARD UPDATE FALLBACK]"
+                f" activity_id={activity_id}"
+                f" type={type(error).__name__}"
+                f" message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
 
         return True
 
