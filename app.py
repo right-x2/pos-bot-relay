@@ -263,7 +263,6 @@ async def keep_typing(
 CARD_CACHE: dict[str, dict[str, str]] = {}
 PENDING_SEARCH_CACHE: dict[str, dict[str, object]] = {}
 PENDING_SEARCH_TTL = timedelta(minutes=5)
-BACKGROUND_CARD_TASKS: set[asyncio.Task] = set()
 
 
 def get_tool_session_key(
@@ -4895,29 +4894,6 @@ class RelayBot(ActivityHandler):
                 f"{type(error).__name__}: {error}"
             )
 
-    async def _process_adaptive_card_in_background(
-        self,
-        turn_context: TurnContext,
-    ) -> None:
-        try:
-            # Reuse the existing action dispatcher. Action.Execute values are
-            # normalized by extract_card_submit_value in on_message_activity.
-            await self.on_message_activity(turn_context)
-        except Exception as error:
-            print(
-                "[ADAPTIVE CARD BACKGROUND ERROR]"
-                f" type={type(error).__name__} message={error}",
-                file=sys.stderr,
-                flush=True,
-            )
-            traceback.print_exc()
-            try:
-                await turn_context.send_activity(
-                    "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
-                )
-            except Exception:
-                pass
-
     async def on_adaptive_card_invoke(
         self,
         turn_context: TurnContext,
@@ -4935,20 +4911,22 @@ class RelayBot(ActivityHandler):
                 },
             )
 
-        task = asyncio.create_task(
-            self._process_adaptive_card_in_background(turn_context)
-        )
-        BACKGROUND_CARD_TASKS.add(task)
-        task.add_done_callback(BACKGROUND_CARD_TASKS.discard)
-
         print(
-            f"[ADAPTIVE CARD ACCEPTED] action={action}",
+            f"[ADAPTIVE CARD START] action={action}",
+            flush=True,
+        )
+        # Process within the invoke turn. Sharing a TurnContext with a detached
+        # task races the adapter's invoke-response finalization and causes the
+        # generic Teams error even when the result card was already sent.
+        await self.on_message_activity(turn_context)
+        print(
+            f"[ADAPTIVE CARD COMPLETE] action={action}",
             flush=True,
         )
         return AdaptiveCardInvokeResponse(
             status_code=200,
             type="application/vnd.microsoft.activity.message",
-            value="요청을 접수했습니다.",
+            value="처리가 완료되었습니다.",
         )
 
     async def on_message_activity(
