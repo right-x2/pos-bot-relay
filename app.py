@@ -625,7 +625,23 @@ def create_tool_menu_card() -> Attachment:
         ],
     }
 
-    return adaptive_attachment(card)
+    # Navigation requires no form values. Use ordinary chat commands via a
+    # Hero Card so opening a tool does not depend on Adaptive Card submission.
+    return Attachment(
+        content_type="application/vnd.microsoft.card.hero",
+        content={
+            "title": "POS 업무 도구",
+            "text": "업무를 선택해주세요. 버튼이 동작하지 않으면 업무명을 채팅으로 입력해주세요. (메뉴 v2)",
+            "buttons": [
+                {
+                    "type": "imBack",
+                    "title": action["title"],
+                    "value": action["title"],
+                }
+                for action in card["actions"]
+            ],
+        },
+    )
 
 
 def create_general_category_card() -> Attachment:
@@ -5473,6 +5489,7 @@ class RelayBot(ActivityHandler):
 
         if compact_command in {
             "상단품검색",
+            "상·단품검색",
             "상품단품검색",
         }:
             await self.handle_tool_select(
@@ -5522,6 +5539,7 @@ class RelayBot(ActivityHandler):
         if compact_command in {
             "일반질문",
             "일반채팅",
+            "카테고리별faq",
         }:
             self.clear_pending_search_tool(
                 turn_context
@@ -5574,10 +5592,33 @@ BOT = RelayBot()
 async def messages(
     request: web.Request,
 ) -> web.Response:
-    return await ADAPTER.process(
-        request,
-        BOT,
-    )
+    request_id = uuid.uuid4().hex[:12]
+    started = asyncio.get_running_loop().time()
+    status = 500
+    # Observe all activity types before SDK dispatch, without logging user
+    # text, credentials or the body. The adapter still authenticates requests.
+    try:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            payload = {}
+        activity_type = str(payload.get("type", ""))[:80]
+        activity_name = str(payload.get("name", ""))[:100]
+        print(
+            f"[BOT HTTP IN] request={request_id}"
+            f" type={activity_type!r} name={activity_name!r}"
+            f" value_type={type(payload.get('value')).__name__}",
+            flush=True,
+        )
+        response = await ADAPTER.process(request, BOT)
+        status = response.status
+        return response
+    finally:
+        elapsed = asyncio.get_running_loop().time() - started
+        print(
+            f"[BOT HTTP OUT] request={request_id}"
+            f" status={status} elapsed={elapsed:.3f}s",
+            flush=True,
+        )
 
 
 async def health(
