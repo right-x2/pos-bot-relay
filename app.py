@@ -342,7 +342,7 @@ def is_barcode_image_attachment(
 
 
 def normalize_adaptive_card_for_teams_mobile(node) -> None:
-    """Use Universal Actions so Teams mobile submits card input reliably."""
+    """Use chat navigation and Universal Actions only for form submissions."""
     if isinstance(node, dict):
         if node.get("type") == "AdaptiveCard":
             node["version"] = "1.5"
@@ -352,7 +352,30 @@ def normalize_adaptive_card_for_teams_mobile(node) -> None:
             if isinstance(action_data, dict):
                 action_data.pop("msteams", None)
                 action_name = str(action_data.get("action", "") or "").strip()
-                if action_name:
+                # These actions only navigate to another card and do not need
+                # any Input.* values. Sending them as ordinary chat messages
+                # avoids the Action.Execute invoke path that intermittently
+                # fails in Teams Android with "앱에 연결할 수 없습니다".
+                if action_name == "tool_menu":
+                    node["associatedInputs"] = "none"
+                    node["data"] = {
+                        "msteams": {
+                            "type": "imBack",
+                            "value": "도구",
+                        }
+                    }
+                elif action_name == "tool_select":
+                    tool_name = str(action_data.get("tool", "") or "").strip()
+                    chat_command = TOOL_TITLES.get(tool_name)
+                    if chat_command:
+                        node["associatedInputs"] = "none"
+                        node["data"] = {
+                            "msteams": {
+                                "type": "imBack",
+                                "value": chat_command,
+                            }
+                        }
+                elif action_name:
                     node["type"] = "Action.Execute"
                     node.setdefault("verb", action_name)
 
@@ -5517,6 +5540,20 @@ class RelayBot(ActivityHandler):
             await self.handle_tool_select(
                 turn_context,
                 {"tool": TOOL_PRODUCT_SEARCH},
+            )
+            return
+
+        if compact_command == "상품검색":
+            await self.handle_tool_select(
+                turn_context,
+                {"tool": TOOL_PRODUCT_LOOKUP},
+            )
+            return
+
+        if compact_command == "단품검색":
+            await self.handle_tool_select(
+                turn_context,
+                {"tool": TOOL_SINGLE_PRODUCT_LOOKUP},
             )
             return
 
