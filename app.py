@@ -343,7 +343,7 @@ def is_barcode_image_attachment(
 
 
 def normalize_adaptive_card_for_teams_mobile(node) -> None:
-    """Use chat navigation and Universal Actions only for form submissions."""
+    """Use Universal Actions so Teams mobile submits card actions reliably."""
     if isinstance(node, dict):
         if node.get("type") == "AdaptiveCard":
             node["version"] = "1.5"
@@ -353,30 +353,7 @@ def normalize_adaptive_card_for_teams_mobile(node) -> None:
             if isinstance(action_data, dict):
                 action_data.pop("msteams", None)
                 action_name = str(action_data.get("action", "") or "").strip()
-                # These actions only navigate to another card and do not need
-                # any Input.* values. Sending them as ordinary chat messages
-                # avoids the Action.Execute invoke path that intermittently
-                # fails in Teams Android with "앱에 연결할 수 없습니다".
-                if action_name == "tool_menu":
-                    node["associatedInputs"] = "none"
-                    node["data"] = {
-                        "msteams": {
-                            "type": "imBack",
-                            "value": "도구",
-                        }
-                    }
-                elif action_name == "tool_select":
-                    tool_name = str(action_data.get("tool", "") or "").strip()
-                    chat_command = TOOL_TITLES.get(tool_name)
-                    if chat_command:
-                        node["associatedInputs"] = "none"
-                        node["data"] = {
-                            "msteams": {
-                                "type": "imBack",
-                                "value": chat_command,
-                            }
-                        }
-                elif action_name:
+                if action_name:
                     node["type"] = "Action.Execute"
                     node.setdefault("verb", action_name)
 
@@ -801,7 +778,27 @@ def create_product_search_tool_menu_card(
         ],
     }
 
-    return adaptive_attachment(card)
+    # Teams Android does not send Adaptive Card Action.Submit + imBack from
+    # this second-level menu at all. Match the proven top-level menu transport:
+    # Hero Card imBack produces a normal message activity on every client.
+    return Attachment(
+        content_type="application/vnd.microsoft.card.hero",
+        content={
+            "title": "상·단품 검색",
+            "text": "검색할 대상을 선택해주세요.",
+            "buttons": [
+                {
+                    "type": "imBack",
+                    "title": action["title"],
+                    "value": TOOL_TITLES.get(
+                        str(action.get("data", {}).get("tool", "") or ""),
+                        "도구",
+                    ),
+                }
+                for action in card["actions"]
+            ],
+        },
+    )
 
 
 def create_product_search_input_card(
