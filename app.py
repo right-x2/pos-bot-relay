@@ -37,9 +37,9 @@ from botbuilder.integration.aiohttp import (
 )
 from botbuilder.schema import (
     Activity,
-    AdaptiveCardInvokeResponse,
     Attachment,
     ChannelAccount,
+    InvokeResponse,
 )
 
 from botbuilder.integration.aiohttp import (
@@ -220,6 +220,12 @@ async def on_error(
         flush=True,
     )
     traceback.print_exc()
+
+    # Invoke failures are returned to Teams through the invoke HTTP response.
+    # Sending another chat activity here produces the misleading generic error
+    # below a result card that was already updated successfully.
+    if str(getattr(turn_context.activity, "type", "") or "").lower() == "invoke":
+        return
 
     try:
         await turn_context.send_activity(
@@ -4894,20 +4900,25 @@ class RelayBot(ActivityHandler):
                 f"{type(error).__name__}: {error}"
             )
 
-    async def on_adaptive_card_invoke(
+    async def on_invoke_activity(
         self,
         turn_context: TurnContext,
-        _invoke_value,
-    ) -> AdaptiveCardInvokeResponse:
+    ) -> InvokeResponse:
+        if str(turn_context.activity.name or "") != "adaptiveCard/action":
+            return await super().on_invoke_activity(turn_context)
+
         submit_value = extract_card_submit_value(turn_context.activity.value)
         action = str(submit_value.get("action", "") or "").strip()
         if not action:
-            return AdaptiveCardInvokeResponse(
-                status_code=400,
-                type="application/vnd.microsoft.error",
-                value={
+            return InvokeResponse(
+                status=400,
+                body={
+                    "statusCode": 400,
+                    "type": "application/vnd.microsoft.error",
+                    "value": {
                     "code": "BadRequest",
                     "message": "Missing card action",
+                    },
                 },
             )
 
@@ -4915,18 +4926,50 @@ class RelayBot(ActivityHandler):
             f"[ADAPTIVE CARD START] action={action}",
             flush=True,
         )
-        # Process within the invoke turn. Sharing a TurnContext with a detached
-        # task races the adapter's invoke-response finalization and causes the
-        # generic Teams error even when the result card was already sent.
-        await self.on_message_activity(turn_context)
+        try:
+            # Process within the invoke turn. Return a plain InvokeResponse so
+            # older botbuilder SDK versions do not try to serialize the nested
+            # AdaptiveCardInvokeResponse model after the card was updated.
+            await self.on_message_activity(turn_context)
+        except Exception as error:
+            print(
+                "[ADAPTIVE CARD ERROR]"
+                f" action={action}"
+                f" type={type(error).__name__}"
+                f" message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
+            try:
+                await turn_context.send_activity(
+                    "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+                )
+            except Exception:
+                pass
+
+            # Teams must still receive a valid invoke response. Otherwise the
+            # client shows its own opaque "문제가 발생했습니다" dialog.
+            return InvokeResponse(
+                status=200,
+                body={
+                    "statusCode": 200,
+                    "type": "application/vnd.microsoft.activity.message",
+                    "value": "요청 처리가 완료되었습니다.",
+                },
+            )
+
         print(
             f"[ADAPTIVE CARD COMPLETE] action={action}",
             flush=True,
         )
-        return AdaptiveCardInvokeResponse(
-            status_code=200,
-            type="application/vnd.microsoft.activity.message",
-            value="처리가 완료되었습니다.",
+        return InvokeResponse(
+            status=200,
+            body={
+                "statusCode": 200,
+                "type": "application/vnd.microsoft.activity.message",
+                "value": "처리가 완료되었습니다.",
+            },
         )
 
     async def on_message_activity(
