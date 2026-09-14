@@ -258,6 +258,8 @@ async def keep_typing(
 CARD_CACHE: dict[str, dict[str, str]] = {}
 PENDING_SEARCH_CACHE: dict[str, dict[str, object]] = {}
 PENDING_SEARCH_TTL = timedelta(minutes=5)
+PENDING_TOOL_INPUT_CACHE: dict[str, dict[str, object]] = {}
+PENDING_TOOL_INPUT_TTL = timedelta(minutes=10)
 
 
 def get_tool_session_key(
@@ -498,6 +500,29 @@ def adaptive_attachment(card: dict) -> Attachment:
     )
 
 
+def hero_attachment(
+    title: str,
+    text: str,
+    buttons: list[tuple[str, str]],
+) -> Attachment:
+    """Create Android-safe buttons that post ordinary chat messages."""
+    return Attachment(
+        content_type="application/vnd.microsoft.card.hero",
+        content={
+            "title": title,
+            "text": text,
+            "buttons": [
+                {
+                    "type": "imBack",
+                    "title": button_title,
+                    "value": message,
+                }
+                for button_title, message in buttons
+            ],
+        },
+    )
+
+
 def create_store_access_elements(
     store_access: dict,
     *,
@@ -645,47 +670,14 @@ def create_tool_menu_card() -> Attachment:
 
 
 def create_general_category_card() -> Attachment:
-    card = {
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-        "type": "AdaptiveCard",
-        "version": "1.3",
-        "body": [
-            {
-                "type": "TextBlock",
-                "text": "카테고리별 FAQ",
-                "weight": "Bolder",
-                "size": "Medium",
-                "wrap": True,
-            },
-            {
-                "type": "TextBlock",
-                "text": "카테고리를 선택하면 많이 조회된 질문 5개를 보여드립니다.",
-                "isSubtle": True,
-                "wrap": True,
-            },
-        ],
-        "actions": [
-            {
-                "type": "Action.Submit",
-                "title": label,
-                "data": {
-                    "action": "general_category_select",
-                    "category": code,
-                },
-            }
+    return hero_attachment(
+        "카테고리별 FAQ",
+        "카테고리를 선택하면 많이 조회된 질문 5개를 보여드립니다.",
+        [
+            (label, f"FAQ카테고리 {code}")
             for code, label in CATEGORIES.items()
-        ] + [
-            {
-                "type": "Action.Submit",
-                "title": "전체 도구",
-                "data": {
-                    "action": "tool_menu",
-                },
-            }
-        ],
-    }
-
-    return adaptive_attachment(card)
+        ] + [("전체 도구", "도구")],
+    )
 
 
 def create_top_faq_questions_card(
@@ -693,7 +685,7 @@ def create_top_faq_questions_card(
     questions: list[dict],
 ) -> Attachment:
     category_name = CATEGORIES.get(category, category)
-    question_actions = []
+    question_buttons = []
 
     for index, item in enumerate(questions[:5], start=1):
         question = str(item.get("question", "") or "").strip()
@@ -702,76 +694,18 @@ def create_top_faq_questions_card(
         display_question = question
         if len(display_question) > 80:
             display_question = f"{display_question[:77]}..."
-        question_actions.append(
-            {
-                "type": "ActionSet",
-                "actions": [
-                    {
-                        "type": "Action.Submit",
-                        "title": f"{index}. {display_question}",
-                        "data": {
-                            "action": "general_top_question_select",
-                            "category": category,
-                            "question": question,
-                        },
-                    }
-                ],
-            }
-        )
+        question_buttons.append((f"{index}. {display_question}", question))
 
-    body = [
-        {
-            "type": "TextBlock",
-            "text": f"{category_name} 상위 질문",
-            "weight": "Bolder",
-            "size": "Medium",
-            "wrap": True,
-        },
-        {
-            "type": "TextBlock",
-            "text": "질문을 누르면 바로 답변을 조회합니다.",
-            "isSubtle": True,
-            "wrap": True,
-        },
-    ]
-
-    if question_actions:
-        body.extend(question_actions)
-    else:
-        body.append(
-            {
-                "type": "TextBlock",
-                "text": "등록된 상위 질문이 없습니다.",
-                "color": "Warning",
-                "wrap": True,
-            }
-        )
-
-    card = {
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-        "type": "AdaptiveCard",
-        "version": "1.3",
-        "body": body,
-        "actions": [
-            {
-                "type": "Action.Submit",
-                "title": "카테고리 선택",
-                "data": {
-                    "action": "tool_select",
-                    "tool": TOOL_GENERAL_CHAT,
-                },
-            },
-            {
-                "type": "Action.Submit",
-                "title": "전체 도구",
-                "data": {
-                    "action": "tool_menu",
-                },
-            },
-        ],
-    }
-
-    return adaptive_attachment(card)
+    return hero_attachment(
+        f"{category_name} 상위 질문",
+        (
+            "질문을 누르면 바로 답변을 조회합니다."
+            if question_buttons
+            else "등록된 상위 질문이 없습니다."
+        ),
+        question_buttons
+        + [("카테고리 선택", "카테고리별 FAQ")],
+    )
 
 
 def create_product_search_tool_menu_card(
@@ -827,7 +761,15 @@ def create_product_search_tool_menu_card(
         ],
     }
 
-    return adaptive_attachment(card)
+    return hero_attachment(
+        "상·단품 검색",
+        "검색할 대상을 선택해주세요.",
+        [
+            ("상품검색", "상품검색"),
+            ("단품검색", "단품검색"),
+            ("전체 도구", "도구"),
+        ],
+    )
 
 
 def create_product_search_input_card(
@@ -3214,6 +3156,118 @@ class RelayBot(ActivityHandler):
             None,
         )
 
+    def set_pending_tool_input(
+        self,
+        turn_context: TurnContext,
+        tool_name: str,
+        selected_store_code: str,
+    ) -> None:
+        session_key = get_tool_session_key(turn_context.activity)
+        PENDING_TOOL_INPUT_CACHE[session_key] = {
+            "tool": tool_name,
+            "selected_store_code": selected_store_code,
+            "expires_at": datetime.now(KST) + PENDING_TOOL_INPUT_TTL,
+        }
+
+    def get_pending_tool_input(
+        self,
+        turn_context: TurnContext,
+    ) -> Optional[dict]:
+        session_key = get_tool_session_key(turn_context.activity)
+        pending = PENDING_TOOL_INPUT_CACHE.get(session_key)
+        if not pending:
+            return None
+        expires_at = pending.get("expires_at")
+        if not isinstance(expires_at, datetime) or datetime.now(KST) >= expires_at:
+            PENDING_TOOL_INPUT_CACHE.pop(session_key, None)
+            return None
+        return pending
+
+    def clear_pending_tool_input(
+        self,
+        turn_context: TurnContext,
+    ) -> None:
+        PENDING_TOOL_INPUT_CACHE.pop(
+            get_tool_session_key(turn_context.activity),
+            None,
+        )
+
+    async def handle_pending_tool_input(
+        self,
+        turn_context: TurnContext,
+        message: str,
+    ) -> bool:
+        pending = self.get_pending_tool_input(turn_context)
+        if not pending:
+            return False
+
+        tool_name = str(pending.get("tool", ""))
+        selected_store_code = str(pending.get("selected_store_code", ""))
+        values = [value.strip() for value in message.split("|")]
+
+        if tool_name == TOOL_POS_MASTER_CREATE:
+            if len(values) != 1 or not values[0]:
+                await turn_context.send_activity("POS 번호만 입력해주세요. 예: 5556")
+                return True
+            submit_value = {
+                "pos_no": values[0],
+                "selected_store_code": selected_store_code,
+            }
+            handler = self.handle_pos_master_create_submit
+        elif tool_name == TOOL_PATTERN_SEARCH:
+            if len(values) not in (2, 3) or not values[0]:
+                await turn_context.send_activity(
+                    "POS번호 | 검색구분 | 검색어 형식으로 입력해주세요. "
+                    "검색구분은 전체/패턴명/설명입니다. 예: 5556 | 패턴명 | 주차"
+                )
+                return True
+            search_type_map = {"전체": "all", "패턴명": "0", "설명": "1"}
+            search_type = search_type_map.get(values[1], values[1])
+            submit_value = {
+                "pos_no": values[0],
+                "search_type": search_type,
+                "search_value": values[2] if len(values) == 3 else "",
+                "selected_store_code": selected_store_code,
+                "page": 1,
+            }
+            handler = self.handle_pattern_search_submit
+        elif tool_name == TOOL_PATTERN_UPDATE:
+            if len(values) != 3 or not all(values):
+                await turn_context.send_activity(
+                    "패턴그룹코드 | 패턴코드 | 패턴값 형식으로 입력해주세요. "
+                    "예: 1001 | 6023 | 1"
+                )
+                return True
+            submit_value = {
+                "pattern_group_code": values[0],
+                "pattern_code": values[1],
+                "pattern_value": values[2],
+                "selected_store_code": selected_store_code,
+            }
+            handler = self.handle_pattern_update_submit
+        elif tool_name == TOOL_REFUND_STATUS:
+            if len(values) != 4 or not all(values):
+                await turn_context.send_activity(
+                    "원거래점코드 | 영업일자 | POS번호 | 거래번호 형식으로 "
+                    "입력해주세요. 예: 210 | 20260911 | 1060 | 0007"
+                )
+                return True
+            submit_value = {
+                "store_code": values[0],
+                "sale_date": values[1],
+                "pos_no": values[2],
+                "deal_no": values[3],
+                "selected_store_code": selected_store_code,
+            }
+            handler = self.handle_refund_status_submit
+        else:
+            self.clear_pending_tool_input(turn_context)
+            return False
+
+        self.clear_pending_tool_input(turn_context)
+        await handler(turn_context, submit_value)
+        return True
+
     async def handle_general_category_select(
         self,
         turn_context: TurnContext,
@@ -3327,6 +3381,7 @@ class RelayBot(ActivityHandler):
         tool_name = str(
             submit_value.get("tool", "")
         ).strip()
+        self.clear_pending_tool_input(turn_context)
 
         store_access = None
         if tool_name in STORE_ROUTED_TOOLS:
@@ -3338,7 +3393,18 @@ class RelayBot(ActivityHandler):
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_pos_master_form_card(store_access)
+            selected_store_code = str(
+                store_access.get("assignedStoreCode", "")
+                or next(iter(store_access.get("accessibleStoreCodes", [])), "")
+            )
+            self.set_pending_tool_input(
+                turn_context, tool_name, selected_store_code
+            )
+            attachment = hero_attachment(
+                "POS 마스터 생성",
+                f"작업 점포: {selected_store_code}\nPOS 번호를 채팅으로 입력해주세요. 예: 5556",
+                [("전체 도구", "도구")],
+            )
         elif tool_name == TOOL_PRODUCT_SEARCH:
             self.clear_pending_search_tool(
                 turn_context
@@ -3353,9 +3419,11 @@ class RelayBot(ActivityHandler):
                 tool_name,
                 str(store_access.get("assignedStoreCode", "")),
             )
-            attachment = create_product_search_input_card(
-                tool_name,
-                store_access,
+            code_label = "상품코드" if tool_name == TOOL_PRODUCT_LOOKUP else "단품코드"
+            attachment = hero_attachment(
+                TOOL_TITLES[tool_name],
+                f"{code_label}를 채팅으로 입력하거나 5분 안에 바코드 이미지를 첨부해주세요.",
+                [("상·단품 검색 메뉴", "상·단품 검색"), ("전체 도구", "도구")],
             )
         elif tool_name == TOOL_GENERAL_CHAT:
             self.clear_pending_search_tool(
@@ -3366,17 +3434,47 @@ class RelayBot(ActivityHandler):
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_pattern_search_form_card(store_access)
+            selected_store_code = str(
+                store_access.get("assignedStoreCode", "")
+                or next(iter(store_access.get("accessibleStoreCodes", [])), "")
+            )
+            self.set_pending_tool_input(turn_context, tool_name, selected_store_code)
+            attachment = hero_attachment(
+                "패턴 조회",
+                f"작업 점포: {selected_store_code}\nPOS번호 | 검색구분 | 검색어 형식으로 채팅에 입력해주세요. "
+                "검색구분: 전체/패턴명/설명\n예: 5556 | 패턴명 | 주차",
+                [("전체 도구", "도구")],
+            )
         elif tool_name == TOOL_PATTERN_UPDATE:
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_pattern_update_form_card(store_access)
+            selected_store_code = str(
+                store_access.get("assignedStoreCode", "")
+                or next(iter(store_access.get("accessibleStoreCodes", [])), "")
+            )
+            self.set_pending_tool_input(turn_context, tool_name, selected_store_code)
+            attachment = hero_attachment(
+                "패턴 수정",
+                f"작업 점포: {selected_store_code}\n패턴그룹코드 | 패턴코드 | 패턴값 형식으로 채팅에 입력해주세요. "
+                "예: 1001 | 6023 | 1",
+                [("전체 도구", "도구")],
+            )
         elif tool_name == TOOL_REFUND_STATUS:
             self.clear_pending_search_tool(
                 turn_context
             )
-            attachment = create_refund_status_form_card(store_access)
+            selected_store_code = str(
+                store_access.get("assignedStoreCode", "")
+                or next(iter(store_access.get("accessibleStoreCodes", [])), "")
+            )
+            self.set_pending_tool_input(turn_context, tool_name, selected_store_code)
+            attachment = hero_attachment(
+                "반품 상태조회",
+                f"작업 점포: {selected_store_code}\n원거래점코드 | 영업일자 | POS번호 | 거래번호 형식으로 "
+                "채팅에 입력해주세요. 예: 210 | 20260911 | 1060 | 0007",
+                [("전체 도구", "도구")],
+            )
         elif tool_name == TOOL_FAMILY_SALE_SALES:
             self.clear_pending_search_tool(turn_context)
             attachment = create_family_sale_form_card()
@@ -5470,6 +5568,7 @@ class RelayBot(ActivityHandler):
             self.clear_pending_search_tool(
                 turn_context
             )
+            self.clear_pending_tool_input(turn_context)
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_tool_menu_card()
@@ -5495,6 +5594,20 @@ class RelayBot(ActivityHandler):
             await self.handle_tool_select(
                 turn_context,
                 {"tool": TOOL_PRODUCT_SEARCH},
+            )
+            return
+
+        if compact_command == "상품검색":
+            await self.handle_tool_select(
+                turn_context,
+                {"tool": TOOL_PRODUCT_LOOKUP},
+            )
+            return
+
+        if compact_command == "단품검색":
+            await self.handle_tool_select(
+                turn_context,
+                {"tool": TOOL_SINGLE_PRODUCT_LOOKUP},
             )
             return
 
@@ -5551,6 +5664,15 @@ class RelayBot(ActivityHandler):
             )
             return
 
+
+        if compact_command.startswith("faq카테고리"):
+            category = compact_command.removeprefix("faq카테고리")
+            await self.handle_general_category_select(
+                turn_context,
+                {"category": category},
+            )
+            return
+
         if compact_command in {
             "@등록",
             "등록",
@@ -5563,6 +5685,12 @@ class RelayBot(ActivityHandler):
                     create_register_form_card()
                 )
             )
+            return
+
+        if await self.handle_pending_tool_input(
+            turn_context,
+            mention_removed,
+        ):
             return
 
         if pending_search_tool and mention_removed:
