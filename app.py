@@ -366,6 +366,21 @@ def normalize_adaptive_card_for_teams_mobile(node) -> None:
                         "displayText",
                         str(node.get("title", "") or action_name),
                     )
+                    # Some Teams Android builds do not dispatch messageBack
+                    # unless both text and value are present, even though the
+                    # desktop client accepts the shorter form.
+                    teams_action.setdefault(
+                        "text",
+                        str(node.get("title", "") or action_name),
+                    )
+                    teams_action.setdefault(
+                        "value",
+                        {
+                            key: value
+                            for key, value in action_data.items()
+                            if key != "msteams"
+                        },
+                    )
                     teams_action.setdefault("action", action_name)
 
         for key, value in list(node.items()):
