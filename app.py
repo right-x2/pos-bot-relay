@@ -35,7 +35,12 @@ from botbuilder.integration.aiohttp import (
     CloudAdapter,
     ConfigurationBotFrameworkAuthentication,
 )
-from botbuilder.schema import Activity, Attachment, ChannelAccount
+from botbuilder.schema import (
+    Activity,
+    AdaptiveCardInvokeResponse,
+    Attachment,
+    ChannelAccount,
+)
 
 from botbuilder.integration.aiohttp import (
     CloudAdapter,
@@ -258,8 +263,7 @@ async def keep_typing(
 CARD_CACHE: dict[str, dict[str, str]] = {}
 PENDING_SEARCH_CACHE: dict[str, dict[str, object]] = {}
 PENDING_SEARCH_TTL = timedelta(minutes=5)
-PENDING_TOOL_INPUT_CACHE: dict[str, dict[str, object]] = {}
-PENDING_TOOL_INPUT_TTL = timedelta(minutes=10)
+BACKGROUND_CARD_TASKS: set[asyncio.Task] = set()
 
 
 def get_tool_session_key(
@@ -333,83 +337,22 @@ def is_barcode_image_attachment(
 
 
 def normalize_adaptive_card_for_teams_mobile(node) -> None:
-    """Keep outgoing cards compatible with Teams mobile (Adaptive Card 1.2)."""
+    """Use Universal Actions so Teams mobile submits card input reliably."""
     if isinstance(node, dict):
         if node.get("type") == "AdaptiveCard":
-            node["version"] = "1.2"
-
-        if str(node.get("type", "")).startswith("Input."):
-            # Input labels and client-side required validation were added in
-            # Adaptive Card 1.3. Validation is also performed server-side.
-            node.pop("label", None)
-            node.pop("isRequired", None)
-            node.pop("errorMessage", None)
+            node["version"] = "1.5"
 
         if node.get("type") == "Action.Submit":
-            node.pop("associatedInputs", None)
-
             action_data = node.get("data")
             if isinstance(action_data, dict):
-                action_name = str(
-                    action_data.get("action", "") or ""
-                ).strip()
+                action_data.pop("msteams", None)
+                action_name = str(action_data.get("action", "") or "").strip()
                 if action_name:
-                    # Teams Android is more reliable when Action.Submit is
-                    # explicitly identified as a Teams messageBack action.
-                    # Keep the original top-level data so Adaptive Card input
-                    # values continue to be merged into activity.value.
-                    teams_action = action_data.get("msteams")
-                    if not isinstance(teams_action, dict):
-                        teams_action = {}
-                        action_data["msteams"] = teams_action
+                    node["type"] = "Action.Execute"
+                    node.setdefault("verb", action_name)
 
-                    teams_action.setdefault("type", "messageBack")
-                    teams_action.setdefault(
-                        "displayText",
-                        str(node.get("title", "") or action_name),
-                    )
-                    # Some Teams Android builds do not dispatch messageBack
-                    # unless both text and value are present, even though the
-                    # desktop client accepts the shorter form.
-                    teams_action.setdefault(
-                        "text",
-                        str(node.get("title", "") or action_name),
-                    )
-                    teams_action.setdefault(
-                        "value",
-                        {
-                            key: value
-                            for key, value in action_data.items()
-                            if key != "msteams"
-                        },
-                    )
-                    teams_action.setdefault("action", action_name)
-
-        for key, value in list(node.items()):
-            if not isinstance(value, list):
-                normalize_adaptive_card_for_teams_mobile(value)
-                continue
-
-            normalized_items = []
-            for item in value:
-                if (
-                    isinstance(item, dict)
-                    and str(item.get("type", "")).startswith("Input.")
-                ):
-                    label = str(item.get("label", "") or "").strip()
-                    if label:
-                        required_mark = " *" if item.get("isRequired") else ""
-                        normalized_items.append(
-                            {
-                                "type": "TextBlock",
-                                "text": f"{label}{required_mark}",
-                                "wrap": True,
-                                "spacing": "Medium",
-                            }
-                        )
-                normalize_adaptive_card_for_teams_mobile(item)
-                normalized_items.append(item)
-            node[key] = normalized_items
+        for value in node.values():
+            normalize_adaptive_card_for_teams_mobile(value)
         return
 
     if isinstance(node, list):
@@ -497,29 +440,6 @@ def adaptive_attachment(card: dict) -> Attachment:
     return Attachment(
         content_type="application/vnd.microsoft.card.adaptive",
         content=card,
-    )
-
-
-def hero_attachment(
-    title: str,
-    text: str,
-    buttons: list[tuple[str, str]],
-) -> Attachment:
-    """Create Android-safe buttons that post ordinary chat messages."""
-    return Attachment(
-        content_type="application/vnd.microsoft.card.hero",
-        content={
-            "title": title,
-            "text": text,
-            "buttons": [
-                {
-                    "type": "imBack",
-                    "title": button_title,
-                    "value": message,
-                }
-                for button_title, message in buttons
-            ],
-        },
     )
 
 
@@ -670,14 +590,47 @@ def create_tool_menu_card() -> Attachment:
 
 
 def create_general_category_card() -> Attachment:
-    return hero_attachment(
-        "카테고리별 FAQ",
-        "카테고리를 선택하면 많이 조회된 질문 5개를 보여드립니다.",
-        [
-            (label, f"FAQ카테고리 {code}")
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "카테고리별 FAQ",
+                "weight": "Bolder",
+                "size": "Medium",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": "카테고리를 선택하면 많이 조회된 질문 5개를 보여드립니다.",
+                "isSubtle": True,
+                "wrap": True,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": label,
+                "data": {
+                    "action": "general_category_select",
+                    "category": code,
+                },
+            }
             for code, label in CATEGORIES.items()
-        ] + [("전체 도구", "도구")],
-    )
+        ] + [
+            {
+                "type": "Action.Submit",
+                "title": "전체 도구",
+                "data": {
+                    "action": "tool_menu",
+                },
+            }
+        ],
+    }
+
+    return adaptive_attachment(card)
 
 
 def create_top_faq_questions_card(
@@ -685,7 +638,7 @@ def create_top_faq_questions_card(
     questions: list[dict],
 ) -> Attachment:
     category_name = CATEGORIES.get(category, category)
-    question_buttons = []
+    question_actions = []
 
     for index, item in enumerate(questions[:5], start=1):
         question = str(item.get("question", "") or "").strip()
@@ -694,18 +647,76 @@ def create_top_faq_questions_card(
         display_question = question
         if len(display_question) > 80:
             display_question = f"{display_question[:77]}..."
-        question_buttons.append((f"{index}. {display_question}", question))
+        question_actions.append(
+            {
+                "type": "ActionSet",
+                "actions": [
+                    {
+                        "type": "Action.Submit",
+                        "title": f"{index}. {display_question}",
+                        "data": {
+                            "action": "general_top_question_select",
+                            "category": category,
+                            "question": question,
+                        },
+                    }
+                ],
+            }
+        )
 
-    return hero_attachment(
-        f"{category_name} 상위 질문",
-        (
-            "질문을 누르면 바로 답변을 조회합니다."
-            if question_buttons
-            else "등록된 상위 질문이 없습니다."
-        ),
-        question_buttons
-        + [("카테고리 선택", "카테고리별 FAQ")],
-    )
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"{category_name} 상위 질문",
+            "weight": "Bolder",
+            "size": "Medium",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": "질문을 누르면 바로 답변을 조회합니다.",
+            "isSubtle": True,
+            "wrap": True,
+        },
+    ]
+
+    if question_actions:
+        body.extend(question_actions)
+    else:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": "등록된 상위 질문이 없습니다.",
+                "color": "Warning",
+                "wrap": True,
+            }
+        )
+
+    card = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.3",
+        "body": body,
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "카테고리 선택",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_GENERAL_CHAT,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "전체 도구",
+                "data": {
+                    "action": "tool_menu",
+                },
+            },
+        ],
+    }
+
+    return adaptive_attachment(card)
 
 
 def create_product_search_tool_menu_card(
@@ -761,15 +772,7 @@ def create_product_search_tool_menu_card(
         ],
     }
 
-    return hero_attachment(
-        "상·단품 검색",
-        "검색할 대상을 선택해주세요.",
-        [
-            ("상품검색", "상품검색"),
-            ("단품검색", "단품검색"),
-            ("전체 도구", "도구"),
-        ],
-    )
+    return adaptive_attachment(card)
 
 
 def create_product_search_input_card(
@@ -3156,118 +3159,6 @@ class RelayBot(ActivityHandler):
             None,
         )
 
-    def set_pending_tool_input(
-        self,
-        turn_context: TurnContext,
-        tool_name: str,
-        selected_store_code: str,
-    ) -> None:
-        session_key = get_tool_session_key(turn_context.activity)
-        PENDING_TOOL_INPUT_CACHE[session_key] = {
-            "tool": tool_name,
-            "selected_store_code": selected_store_code,
-            "expires_at": datetime.now(KST) + PENDING_TOOL_INPUT_TTL,
-        }
-
-    def get_pending_tool_input(
-        self,
-        turn_context: TurnContext,
-    ) -> Optional[dict]:
-        session_key = get_tool_session_key(turn_context.activity)
-        pending = PENDING_TOOL_INPUT_CACHE.get(session_key)
-        if not pending:
-            return None
-        expires_at = pending.get("expires_at")
-        if not isinstance(expires_at, datetime) or datetime.now(KST) >= expires_at:
-            PENDING_TOOL_INPUT_CACHE.pop(session_key, None)
-            return None
-        return pending
-
-    def clear_pending_tool_input(
-        self,
-        turn_context: TurnContext,
-    ) -> None:
-        PENDING_TOOL_INPUT_CACHE.pop(
-            get_tool_session_key(turn_context.activity),
-            None,
-        )
-
-    async def handle_pending_tool_input(
-        self,
-        turn_context: TurnContext,
-        message: str,
-    ) -> bool:
-        pending = self.get_pending_tool_input(turn_context)
-        if not pending:
-            return False
-
-        tool_name = str(pending.get("tool", ""))
-        selected_store_code = str(pending.get("selected_store_code", ""))
-        values = [value.strip() for value in message.split("|")]
-
-        if tool_name == TOOL_POS_MASTER_CREATE:
-            if len(values) != 1 or not values[0]:
-                await turn_context.send_activity("POS 번호만 입력해주세요. 예: 5556")
-                return True
-            submit_value = {
-                "pos_no": values[0],
-                "selected_store_code": selected_store_code,
-            }
-            handler = self.handle_pos_master_create_submit
-        elif tool_name == TOOL_PATTERN_SEARCH:
-            if len(values) not in (2, 3) or not values[0]:
-                await turn_context.send_activity(
-                    "POS번호 | 검색구분 | 검색어 형식으로 입력해주세요. "
-                    "검색구분은 전체/패턴명/설명입니다. 예: 5556 | 패턴명 | 주차"
-                )
-                return True
-            search_type_map = {"전체": "all", "패턴명": "0", "설명": "1"}
-            search_type = search_type_map.get(values[1], values[1])
-            submit_value = {
-                "pos_no": values[0],
-                "search_type": search_type,
-                "search_value": values[2] if len(values) == 3 else "",
-                "selected_store_code": selected_store_code,
-                "page": 1,
-            }
-            handler = self.handle_pattern_search_submit
-        elif tool_name == TOOL_PATTERN_UPDATE:
-            if len(values) != 3 or not all(values):
-                await turn_context.send_activity(
-                    "패턴그룹코드 | 패턴코드 | 패턴값 형식으로 입력해주세요. "
-                    "예: 1001 | 6023 | 1"
-                )
-                return True
-            submit_value = {
-                "pattern_group_code": values[0],
-                "pattern_code": values[1],
-                "pattern_value": values[2],
-                "selected_store_code": selected_store_code,
-            }
-            handler = self.handle_pattern_update_submit
-        elif tool_name == TOOL_REFUND_STATUS:
-            if len(values) != 4 or not all(values):
-                await turn_context.send_activity(
-                    "원거래점코드 | 영업일자 | POS번호 | 거래번호 형식으로 "
-                    "입력해주세요. 예: 210 | 20260911 | 1060 | 0007"
-                )
-                return True
-            submit_value = {
-                "store_code": values[0],
-                "sale_date": values[1],
-                "pos_no": values[2],
-                "deal_no": values[3],
-                "selected_store_code": selected_store_code,
-            }
-            handler = self.handle_refund_status_submit
-        else:
-            self.clear_pending_tool_input(turn_context)
-            return False
-
-        self.clear_pending_tool_input(turn_context)
-        await handler(turn_context, submit_value)
-        return True
-
     async def handle_general_category_select(
         self,
         turn_context: TurnContext,
@@ -3381,7 +3272,6 @@ class RelayBot(ActivityHandler):
         tool_name = str(
             submit_value.get("tool", "")
         ).strip()
-        self.clear_pending_tool_input(turn_context)
 
         store_access = None
         if tool_name in STORE_ROUTED_TOOLS:
@@ -3393,18 +3283,7 @@ class RelayBot(ActivityHandler):
             self.clear_pending_search_tool(
                 turn_context
             )
-            selected_store_code = str(
-                store_access.get("assignedStoreCode", "")
-                or next(iter(store_access.get("accessibleStoreCodes", [])), "")
-            )
-            self.set_pending_tool_input(
-                turn_context, tool_name, selected_store_code
-            )
-            attachment = hero_attachment(
-                "POS 마스터 생성",
-                f"작업 점포: {selected_store_code}\nPOS 번호를 채팅으로 입력해주세요. 예: 5556",
-                [("전체 도구", "도구")],
-            )
+            attachment = create_pos_master_form_card(store_access)
         elif tool_name == TOOL_PRODUCT_SEARCH:
             self.clear_pending_search_tool(
                 turn_context
@@ -3419,11 +3298,9 @@ class RelayBot(ActivityHandler):
                 tool_name,
                 str(store_access.get("assignedStoreCode", "")),
             )
-            code_label = "상품코드" if tool_name == TOOL_PRODUCT_LOOKUP else "단품코드"
-            attachment = hero_attachment(
-                TOOL_TITLES[tool_name],
-                f"{code_label}를 채팅으로 입력하거나 5분 안에 바코드 이미지를 첨부해주세요.",
-                [("상·단품 검색 메뉴", "상·단품 검색"), ("전체 도구", "도구")],
+            attachment = create_product_search_input_card(
+                tool_name,
+                store_access,
             )
         elif tool_name == TOOL_GENERAL_CHAT:
             self.clear_pending_search_tool(
@@ -3434,47 +3311,17 @@ class RelayBot(ActivityHandler):
             self.clear_pending_search_tool(
                 turn_context
             )
-            selected_store_code = str(
-                store_access.get("assignedStoreCode", "")
-                or next(iter(store_access.get("accessibleStoreCodes", [])), "")
-            )
-            self.set_pending_tool_input(turn_context, tool_name, selected_store_code)
-            attachment = hero_attachment(
-                "패턴 조회",
-                f"작업 점포: {selected_store_code}\nPOS번호 | 검색구분 | 검색어 형식으로 채팅에 입력해주세요. "
-                "검색구분: 전체/패턴명/설명\n예: 5556 | 패턴명 | 주차",
-                [("전체 도구", "도구")],
-            )
+            attachment = create_pattern_search_form_card(store_access)
         elif tool_name == TOOL_PATTERN_UPDATE:
             self.clear_pending_search_tool(
                 turn_context
             )
-            selected_store_code = str(
-                store_access.get("assignedStoreCode", "")
-                or next(iter(store_access.get("accessibleStoreCodes", [])), "")
-            )
-            self.set_pending_tool_input(turn_context, tool_name, selected_store_code)
-            attachment = hero_attachment(
-                "패턴 수정",
-                f"작업 점포: {selected_store_code}\n패턴그룹코드 | 패턴코드 | 패턴값 형식으로 채팅에 입력해주세요. "
-                "예: 1001 | 6023 | 1",
-                [("전체 도구", "도구")],
-            )
+            attachment = create_pattern_update_form_card(store_access)
         elif tool_name == TOOL_REFUND_STATUS:
             self.clear_pending_search_tool(
                 turn_context
             )
-            selected_store_code = str(
-                store_access.get("assignedStoreCode", "")
-                or next(iter(store_access.get("accessibleStoreCodes", [])), "")
-            )
-            self.set_pending_tool_input(turn_context, tool_name, selected_store_code)
-            attachment = hero_attachment(
-                "반품 상태조회",
-                f"작업 점포: {selected_store_code}\n원거래점코드 | 영업일자 | POS번호 | 거래번호 형식으로 "
-                "채팅에 입력해주세요. 예: 210 | 20260911 | 1060 | 0007",
-                [("전체 도구", "도구")],
-            )
+            attachment = create_refund_status_form_card(store_access)
         elif tool_name == TOOL_FAMILY_SALE_SALES:
             self.clear_pending_search_tool(turn_context)
             attachment = create_family_sale_form_card()
@@ -5048,6 +4895,62 @@ class RelayBot(ActivityHandler):
                 f"{type(error).__name__}: {error}"
             )
 
+    async def _process_adaptive_card_in_background(
+        self,
+        turn_context: TurnContext,
+    ) -> None:
+        try:
+            # Reuse the existing action dispatcher. Action.Execute values are
+            # normalized by extract_card_submit_value in on_message_activity.
+            await self.on_message_activity(turn_context)
+        except Exception as error:
+            print(
+                "[ADAPTIVE CARD BACKGROUND ERROR]"
+                f" type={type(error).__name__} message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
+            try:
+                await turn_context.send_activity(
+                    "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+                )
+            except Exception:
+                pass
+
+    async def on_adaptive_card_invoke(
+        self,
+        turn_context: TurnContext,
+        _invoke_value,
+    ) -> AdaptiveCardInvokeResponse:
+        submit_value = extract_card_submit_value(turn_context.activity.value)
+        action = str(submit_value.get("action", "") or "").strip()
+        if not action:
+            return AdaptiveCardInvokeResponse(
+                status_code=400,
+                type="application/vnd.microsoft.error",
+                value={
+                    "code": "BadRequest",
+                    "message": "Missing card action",
+                },
+            )
+
+        task = asyncio.create_task(
+            self._process_adaptive_card_in_background(turn_context)
+        )
+        BACKGROUND_CARD_TASKS.add(task)
+        task.add_done_callback(BACKGROUND_CARD_TASKS.discard)
+
+        print(
+            f"[ADAPTIVE CARD ACCEPTED] action={action}",
+            flush=True,
+        )
+        return AdaptiveCardInvokeResponse(
+            status_code=200,
+            type="application/vnd.microsoft.activity.message",
+            value="요청을 접수했습니다.",
+        )
+
     async def on_message_activity(
         self,
         turn_context: TurnContext,
@@ -5568,7 +5471,6 @@ class RelayBot(ActivityHandler):
             self.clear_pending_search_tool(
                 turn_context
             )
-            self.clear_pending_tool_input(turn_context)
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     create_tool_menu_card()
@@ -5594,20 +5496,6 @@ class RelayBot(ActivityHandler):
             await self.handle_tool_select(
                 turn_context,
                 {"tool": TOOL_PRODUCT_SEARCH},
-            )
-            return
-
-        if compact_command == "상품검색":
-            await self.handle_tool_select(
-                turn_context,
-                {"tool": TOOL_PRODUCT_LOOKUP},
-            )
-            return
-
-        if compact_command == "단품검색":
-            await self.handle_tool_select(
-                turn_context,
-                {"tool": TOOL_SINGLE_PRODUCT_LOOKUP},
             )
             return
 
@@ -5664,15 +5552,6 @@ class RelayBot(ActivityHandler):
             )
             return
 
-
-        if compact_command.startswith("faq카테고리"):
-            category = compact_command.removeprefix("faq카테고리")
-            await self.handle_general_category_select(
-                turn_context,
-                {"category": category},
-            )
-            return
-
         if compact_command in {
             "@등록",
             "등록",
@@ -5685,12 +5564,6 @@ class RelayBot(ActivityHandler):
                     create_register_form_card()
                 )
             )
-            return
-
-        if await self.handle_pending_tool_input(
-            turn_context,
-            mention_removed,
-        ):
             return
 
         if pending_search_tool and mention_removed:
