@@ -4979,7 +4979,9 @@ class RelayBot(ActivityHandler):
                 body=AdaptiveCardInvokeResponse(
                     status_code=200,
                     type="application/vnd.microsoft.activity.message",
-                    value="요청 처리가 완료되었습니다.",
+                    value={
+                        "message": "요청 처리가 완료되었습니다.",
+                    },
                 ),
             )
 
@@ -4992,7 +4994,9 @@ class RelayBot(ActivityHandler):
             body=AdaptiveCardInvokeResponse(
                 status_code=200,
                 type="application/vnd.microsoft.activity.message",
-                value="처리가 완료되었습니다.",
+                value={
+                    "message": "처리가 완료되었습니다.",
+                },
             ),
         )
 
