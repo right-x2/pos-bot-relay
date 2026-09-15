@@ -1461,29 +1461,108 @@ def create_refund_status_form_card(
 
 def create_refund_status_result_card(response_json: dict) -> Attachment:
     found = bool(response_json.get("found"))
+    status = str(response_json.get("status") or "").strip().upper()
+    if status not in {"IN_PROGRESS", "REFUNDED", "NOT_REFUNDED"}:
+        # Backward compatibility with the response used before status was added.
+        status = "IN_PROGRESS" if found else "NOT_REFUNDED"
+
     original = response_json.get("originalTransaction")
     progress = response_json.get("refundProgress")
+    receipt = response_json.get("refundReceipt")
     if not isinstance(original, dict):
         original = {}
     if not isinstance(progress, dict):
         progress = {}
+    if not isinstance(receipt, dict):
+        receipt = {}
 
-    facts = [
+    lookup_facts = [
         {
             "title": "조회 점포",
             "value": str(response_json.get("assignedStoreCode") or "-"),
         },
-        {"title": "원거래 점코드", "value": str(original.get("storeCode") or "-")},
+    ]
+    original_facts = [
+        {"title": "점코드", "value": str(original.get("storeCode") or "-")},
         {"title": "영업일자", "value": str(original.get("saleDate") or "-")},
         {"title": "POS 번호", "value": str(original.get("posNo") or "-")},
         {"title": "거래번호", "value": str(original.get("dealNo") or "-")},
     ]
-    if found:
-        facts.extend(
+    refund_yn = str(original.get("refundYn") or "").strip()
+    if refund_yn:
+        original_facts.append(
+            {
+                "title": "반품 여부",
+                "value": "반품 완료" if refund_yn == "1" else "미반품",
+            }
+        )
+
+    status_view = {
+        "IN_PROGRESS": ("반품 진행 중", "Attention", "반품 진행 정보", progress),
+        "REFUNDED": ("반품 완료", "Good", "반품 거래 정보", receipt),
+        "NOT_REFUNDED": ("미반품 거래", "Warning", "", {}),
+    }
+    status_title, status_color, detail_title, detail = status_view[status]
+
+    message = str(response_json.get("message") or "").strip()
+    if not message:
+        message = {
+            "IN_PROGRESS": "반품 진행중입니다.",
+            "REFUNDED": "반품된 거래입니다.",
+            "NOT_REFUNDED": "반품되지 않은 거래입니다.",
+        }[status]
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": "반품 상태조회 결과",
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": status_color,
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": status_title,
+            "weight": "Bolder",
+            "size": "Large",
+            "color": status_color,
+            "wrap": True,
+        },
+        {"type": "TextBlock", "text": message[:1000], "wrap": True},
+        {"type": "FactSet", "facts": lookup_facts},
+        {
+            "type": "TextBlock",
+            "text": "원거래 정보",
+            "weight": "Bolder",
+            "spacing": "Medium",
+            "separator": True,
+            "wrap": True,
+        },
+        {"type": "FactSet", "facts": original_facts},
+    ]
+
+    if detail_title:
+        detail_facts = [
+            {"title": "점코드", "value": str(detail.get("storeCode") or "-")},
+            {"title": "영업일자", "value": str(detail.get("saleDate") or "-")},
+            {"title": "POS 번호", "value": str(detail.get("posNo") or "-")},
+        ]
+        if status == "REFUNDED" or detail.get("dealNo") is not None:
+            detail_facts.append(
+                {"title": "거래번호", "value": str(detail.get("dealNo") or "-")}
+            )
+        body.extend(
             [
-                {"title": "진행 점코드", "value": str(progress.get("storeCode") or "-")},
-                {"title": "진행 영업일자", "value": str(progress.get("saleDate") or "-")},
-                {"title": "진행 POS 번호", "value": str(progress.get("posNo") or "-")},
+                {
+                    "type": "TextBlock",
+                    "text": detail_title,
+                    "weight": "Bolder",
+                    "spacing": "Medium",
+                    "separator": True,
+                    "wrap": True,
+                },
+                {"type": "FactSet", "facts": detail_facts},
             ]
         )
 
@@ -1491,7 +1570,7 @@ def create_refund_status_result_card(response_json: dict) -> Attachment:
     selected_store_code = str(
         response_json.get("assignedStoreCode") or ""
     )
-    if found:
+    if status == "IN_PROGRESS":
         actions.append(
             {
                 "type": "Action.Submit",
@@ -1527,27 +1606,7 @@ def create_refund_status_result_card(response_json: dict) -> Attachment:
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
         "version": "1.3",
-        "body": [
-            {
-                "type": "TextBlock",
-                "text": "반품 상태조회 결과",
-                "weight": "Bolder",
-                "size": "Medium",
-                "color": "Attention" if found else "Good",
-                "wrap": True,
-            },
-            {
-                "type": "TextBlock",
-                "text": (
-                    "반품 진행중입니다."
-                    if found
-                    else "반품 진행중이지 않습니다."
-                ),
-                "weight": "Bolder",
-                "wrap": True,
-            },
-            {"type": "FactSet", "facts": facts},
-        ],
+        "body": body,
         "actions": actions,
     }
     return adaptive_attachment(card)

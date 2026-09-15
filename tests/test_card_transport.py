@@ -27,6 +27,57 @@ def walk(value):
 
 
 class CardTransportTests(unittest.TestCase):
+    def test_refund_status_cards_show_each_backend_status(self):
+        original = {
+            "storeCode": "210", "saleDate": "20260915",
+            "posNo": "1111", "dealNo": "000123",
+        }
+        cases = (
+            (
+                "IN_PROGRESS", "반품 진행 중", "반품 진행 정보", True,
+                {"refundProgress": {
+                    "storeCode": "210", "saleDate": "20260915", "posNo": "2222",
+                }},
+            ),
+            (
+                "REFUNDED", "반품 완료", "반품 거래 정보", False,
+                {"refundReceipt": {
+                    "storeCode": "210", "saleDate": "20260915",
+                    "posNo": "3333", "dealNo": "000456",
+                }},
+            ),
+            ("NOT_REFUNDED", "미반품 거래", None, False, {}),
+        )
+        for status, title, detail_title, can_cancel, extra in cases:
+            with self.subTest(status=status):
+                payload = {
+                    "ok": True,
+                    "assignedStoreCode": "210",
+                    "found": status == "IN_PROGRESS",
+                    "status": status,
+                    "message": f"{status} 안내",
+                    "originalTransaction": {
+                        **original,
+                        "refundYn": "1" if status == "REFUNDED" else "0",
+                    },
+                    **extra,
+                }
+                card = app.create_refund_status_result_card(payload).content
+                texts = [node.get("text") for node in walk(card)
+                         if node.get("type") == "TextBlock"]
+                facts = [fact for node in walk(card) if node.get("type") == "FactSet"
+                         for fact in node.get("facts", [])]
+                action_titles = [node.get("title") for node in walk(card)
+                                 if node.get("type") == "Action.Submit"]
+                self.assertIn(title, texts)
+                self.assertIn("원거래 정보", texts)
+                if detail_title:
+                    self.assertIn(detail_title, texts)
+                self.assertIn({"title": "거래번호", "value": "000123"}, facts)
+                if status == "REFUNDED":
+                    self.assertIn({"title": "거래번호", "value": "000456"}, facts)
+                self.assertEqual("반품진행 취소" in action_titles, can_cancel)
+
     def test_tool_menu_keeps_all_buttons_on_one_compact_card(self):
         card = app.create_tool_menu_card()
         self.assertEqual(card.content_type, "application/vnd.microsoft.card.hero")
