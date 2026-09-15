@@ -1,11 +1,13 @@
 Add-Type -AssemblyName System.Net.Http
 
+$RelayVersion = "2026-09-15-item-name-v1"
 $ListenPort = 30002
 $ChatUrl = "http://10.103.201.164:8000/api/rag/chat"
 $RegisterUrl = "http://10.103.201.164:8000/api/posts/request"
 $ImageChatUrl = "http://10.103.201.164:8000/api/rag/image-chat"
 $FeedbackUrl = "http://10.103.201.164:8000/api/logs/help-yn"
 $ItemSearchUrl = "http://10.103.201.164:8000/api/items/search"
+$ItemNameSearchUrl = "http://10.103.201.164:8000/api/items/search-by-name"
 $StoreAccessUrl = "http://10.103.201.164:8000/tools/store_access"
 $PosMasterUrl = "http://10.103.201.164:8000/tools/create_pos_master"
 $PatternSearchUrl = "http://10.103.201.164:8000/tools/pattern_lookup"
@@ -107,12 +109,16 @@ try {
     Write-Host ""
     Write-Host "============================================================"
     Write-Host "Teams internal relay started"
+    Write-Host "Script   : $($MyInvocation.MyCommand.Path)"
+    Write-Host "Version  : $RelayVersion"
     Write-Host "Listen   : http://+:$ListenPort/"
     Write-Host "Chat     : $ChatUrl"
     Write-Host "Register : $RegisterUrl"
     Write-Host "Image    : $ImageChatUrl"
     Write-Host "Feedback : $FeedbackUrl"
     Write-Host "Item     : $ItemSearchUrl"
+    Write-Host "ItemName : $ItemNameSearchUrl"
+    Write-Host "Store    : $StoreAccessUrl"
     Write-Host "PosMaster: $PosMasterUrl"
     Write-Host "Pattern  : $PatternSearchUrl"
     Write-Host "PtnUpdate: $PatternUpdateUrl"
@@ -129,7 +135,10 @@ try {
         $Response = $Context.Response
 
         try {
-            $Path = $Request.Url.AbsolutePath.ToLowerInvariant()
+            $Path = $Request.Url.AbsolutePath.ToLowerInvariant().TrimEnd('/')
+            if ([string]::IsNullOrWhiteSpace($Path)) {
+                $Path = "/"
+            }
             $Method = $Request.HttpMethod.ToUpperInvariant()
             $Now = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
@@ -143,12 +152,15 @@ try {
                 $HealthBody = [ordered]@{
                     success = $true
                     service = "internal-relay"
+                    version = $RelayVersion
+                    scriptPath = $MyInvocation.MyCommand.Path
                     listenPort = $ListenPort
                     chatUrl = $ChatUrl
                     registerUrl = $RegisterUrl
                     imageUrl = $ImageChatUrl
                     feedbackUrl = $FeedbackUrl
                     itemSearchUrl = $ItemSearchUrl
+                    itemNameSearchUrl = $ItemNameSearchUrl
                     storeAccessUrl = $StoreAccessUrl
                     posMasterUrl = $PosMasterUrl
                     patternSearchUrl = $PatternSearchUrl
@@ -178,11 +190,16 @@ try {
 
             if (
                 ($Path -eq "/image-chat") -or
-                ($Path -eq "/api/items/search")
+                ($Path -eq "/api/items/search") -or
+                ($Path -eq "/api/items/search-by-name")
             ) {
                 $IncomingContentType = [string]$Request.ContentType
 
-                if ($Path -eq "/api/items/search") {
+                if ($Path -eq "/api/items/search-by-name") {
+                    $BinaryTargetUrl = $ItemNameSearchUrl
+                    $BinaryRouteName = "items-search-by-name"
+                }
+                elseif ($Path -eq "/api/items/search") {
                     $BinaryTargetUrl = $ItemSearchUrl
                     $BinaryRouteName = "items-search"
                 }
@@ -574,7 +591,7 @@ try {
                     limit = $Limit
                 } | ConvertTo-Json -Depth 20 -Compress
             }
-            else {
+            elseif (($Path -eq "/test") -or ($Path -eq "/api/rag/chat")) {
                 $TargetUrl = $ChatUrl
 
                 $Question = [string]$Incoming.message
@@ -599,6 +616,17 @@ try {
                     userId = $UserId
                     question = $Question
                 } | ConvertTo-Json -Depth 20 -Compress
+            }
+            else {
+                $ErrorBody = [ordered]@{
+                    success = $false
+                    requestId = $null
+                    message = "Unknown relay path: $Path"
+                    errorCode = "ROUTE_NOT_FOUND"
+                } | ConvertTo-Json -Compress
+
+                Send-JsonResponse -Response $Response -StatusCode 404 -JsonBody $ErrorBody
+                continue
             }
 
             Write-Host "Target : $TargetUrl"
