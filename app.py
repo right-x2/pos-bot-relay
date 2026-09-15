@@ -16,7 +16,7 @@ from image_forwarder import (
 from family_sale import request_family_sale_sales
 from family_sale_display import format_amount, format_change_rate
 from item_display import format_item_use_period, format_product_result_value
-from item_search import search_items
+from item_search import search_items, search_items_by_name
 from faq_questions import fetch_top_faq_questions
 from pattern_search import search_patterns
 from pattern_update import update_pattern
@@ -162,6 +162,11 @@ class Config:
     ITEM_SEARCH_API_URL = os.getenv(
         "ITEM_SEARCH_API_URL",
         "http://123.111.174.78:30002/api/items/search",
+    )
+
+    ITEM_NAME_SEARCH_API_URL = os.getenv(
+        "ITEM_NAME_SEARCH_API_URL",
+        "http://123.111.174.78:30002/api/items/search-by-name",
     )
 
     POS_MASTER_API_URL = os.getenv(
@@ -847,8 +852,9 @@ def create_product_search_input_card(
             {
                 "type": "TextBlock",
                 "text": (
-                    f"{code_label}를 입력해 검색할 수 있습니다. 바코드는 점포를 "
-                    "고른 뒤 '바코드 이미지 검색 준비'를 누르고 5분 안에 첨부해주세요."
+                    f"{code_label} 또는 {TOOL_TITLES[tool_name]} 이름으로 검색할 수 있습니다. "
+                    "이름은 2글자 이상 입력해주세요. 바코드는 점포를 고른 뒤 "
+                    "'바코드 이미지 검색 준비'를 누르고 5분 안에 첨부해주세요."
                 ),
                 "wrap": True,
                 "isSubtle": True,
@@ -865,6 +871,13 @@ def create_product_search_input_card(
                 "placeholder": f"{code_label} 입력",
                 "maxLength": 100,
             },
+            {
+                "type": "Input.Text",
+                "id": "search_name",
+                "label": f"{TOOL_TITLES[tool_name]}명",
+                "placeholder": "이름 2글자 이상 입력",
+                "maxLength": 100,
+            },
         ],
         "actions": [
             {
@@ -874,6 +887,16 @@ def create_product_search_input_card(
                 "data": {
                     "action": "product_search_code_submit",
                     "tool": tool_name,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "이름으로 검색",
+                "style": "positive",
+                "data": {
+                    "action": "product_search_name_submit",
+                    "tool": tool_name,
+                    "page": 1,
                 },
             },
             {
@@ -903,6 +926,176 @@ def create_product_search_input_card(
     }
 
     return adaptive_attachment(card)
+
+
+def create_product_name_results_card(
+    *,
+    tool_name: str,
+    selected_store_code: str,
+    keyword: str,
+    response_json: dict,
+    page: int = 1,
+) -> Attachment:
+    raw_items = response_json.get("items")
+    if not isinstance(raw_items, list):
+        raw_items = []
+    items = [item for item in raw_items[:50] if isinstance(item, dict)]
+
+    page_size = 10
+    total_items = len(items)
+    total_pages = max((total_items + page_size - 1) // page_size, 1)
+    current_page = min(max(page, 1), total_pages)
+    start = (current_page - 1) * page_size
+    page_items = items[start:start + page_size]
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"{TOOL_TITLES[tool_name]}명 검색 결과",
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": "Good" if total_items else "Warning",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": f"검색어: {keyword} · 총 {total_items}건",
+            "wrap": True,
+        },
+    ]
+
+    if page_items:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": "상세 조회할 항목을 선택해주세요.",
+                "isSubtle": True,
+                "wrap": True,
+            }
+        )
+        for index, item in enumerate(page_items, start=start + 1):
+            if tool_name == TOOL_PRODUCT_LOOKUP:
+                name = str(item.get("itemName") or "이름 없음")
+                code = str(item.get("itemCode") or "").strip()
+                op_code = str(item.get("opCode") or "").strip()
+                sale_type = str(item.get("saleType") or "").strip()
+                candidate_facts = [
+                    {"title": "상품코드", "value": code or "-"},
+                    {"title": "OP_CD", "value": op_code or "-"},
+                    {"title": "SALE_TP", "value": sale_type or "-"},
+                ]
+            else:
+                name = str(item.get("pluName") or "이름 없음")
+                code = str(item.get("pluCode") or "").strip()
+                op_code = ""
+                sale_type = ""
+                candidate_facts = [
+                    {"title": "단품코드", "value": code or "-"},
+                ]
+
+            if not code:
+                continue
+
+            body.append(
+                {
+                    "type": "Container",
+                    "separator": True,
+                    "spacing": "Medium",
+                    "items": [
+                        {
+                            "type": "TextBlock",
+                            "text": f"{index}. {name[:100]}",
+                            "weight": "Bolder",
+                            "wrap": True,
+                        },
+                        {"type": "FactSet", "facts": candidate_facts},
+                        {
+                            "type": "ActionSet",
+                            "actions": [
+                                {
+                                    "type": "Action.Submit",
+                                    "title": "조회",
+                                    "data": {
+                                        "action": "product_search_name_select",
+                                        "tool": tool_name,
+                                        "selected_store_code": selected_store_code,
+                                        "search_code": code,
+                                        "op_code": op_code,
+                                        "sale_type": sale_type,
+                                    },
+                                }
+                            ],
+                        },
+                    ],
+                }
+            )
+    else:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": "일치하는 이름이 없습니다.",
+                "color": "Warning",
+                "wrap": True,
+            }
+        )
+
+    actions = []
+    common_data = {
+        "action": "product_search_name_submit",
+        "tool": tool_name,
+        "selected_store_code": selected_store_code,
+        "search_name": keyword,
+    }
+    if current_page > 1:
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "이전",
+                "data": {**common_data, "page": current_page - 1},
+            }
+        )
+    if current_page < total_pages:
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "다음",
+                "data": {**common_data, "page": current_page + 1},
+            }
+        )
+    if total_pages > 1:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": f"{current_page} / {total_pages} 페이지",
+                "isSubtle": True,
+                "size": "Small",
+                "wrap": True,
+            }
+        )
+    actions.extend(
+        [
+            {
+                "type": "Action.Submit",
+                "title": "다시 검색",
+                "data": {"action": "tool_select", "tool": tool_name},
+            },
+            {
+                "type": "Action.Submit",
+                "title": "상·단품 검색 메뉴",
+                "data": {"action": "tool_select", "tool": TOOL_PRODUCT_SEARCH},
+            },
+        ]
+    )
+
+    return adaptive_attachment(
+        {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.3",
+            "body": body,
+            "actions": actions,
+        }
+    )
 
 
 def create_product_search_result_card(
@@ -3505,6 +3698,149 @@ class RelayBot(ActivityHandler):
             ),
         )
 
+    async def handle_product_search_name_submit(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        tool_name = str(submit_value.get("tool", "")).strip()
+        keyword = str(submit_value.get("search_name", "")).strip()
+        selected_store_code = str(
+            submit_value.get("selected_store_code", "")
+        ).strip()
+        try:
+            page = max(int(submit_value.get("page", 1) or 1), 1)
+        except (TypeError, ValueError):
+            page = 1
+
+        if tool_name not in (TOOL_PRODUCT_LOOKUP, TOOL_SINGLE_PRODUCT_LOOKUP):
+            await turn_context.send_activity("올바르지 않은 검색 도구입니다.")
+            return
+        if not selected_store_code:
+            await turn_context.send_activity("작업할 점포를 선택해주세요.")
+            return
+        if len(keyword) < 2:
+            await turn_context.send_activity("이름은 최소 2글자 이상 입력해주세요.")
+            return
+        if len(keyword) > 100:
+            await turn_context.send_activity("이름은 100자 이하로 입력해주세요.")
+            return
+
+        teams_account_id, _ = await get_teams_account(turn_context)
+        if not teams_account_id:
+            await turn_context.send_activity(
+                "Teams 계정 아이디를 확인하지 못해 이름 검색을 처리할 수 없습니다."
+            )
+            return
+
+        item_type = "상품" if tool_name == TOOL_PRODUCT_LOOKUP else "단품"
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(
+            keep_typing(turn_context, typing_stop_event)
+        )
+        try:
+            api_result = await search_items_by_name(
+                target_url=CONFIG.ITEM_NAME_SEARCH_API_URL,
+                user_id=teams_account_id,
+                selected_store_code=selected_store_code,
+                item_type=item_type,
+                keyword=keyword,
+            )
+        except Exception as error:
+            print(
+                "[ITEM NAME SEARCH API ERROR]"
+                f" tool={tool_name} type={type(error).__name__} message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
+            await turn_context.send_activity(
+                "상·단품 이름 검색 중 오류가 발생했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+            return
+        finally:
+            typing_stop_event.set()
+            try:
+                await typing_task
+            except Exception as typing_error:
+                print(
+                    "[ITEM NAME SEARCH TYPING ERROR]"
+                    f" type={type(typing_error).__name__} message={typing_error}",
+                    flush=True,
+                )
+
+        status_code = int(api_result.get("status", 0) or 0)
+        response_text = str(api_result.get("response_text", ""))
+        response_json = api_result.get("response_json")
+        if not isinstance(response_json, dict):
+            response_json = {}
+
+        print(
+            "[ITEM NAME SEARCH API RESPONSE]"
+            f" tool={tool_name} status={status_code} body={response_text[:1000]}",
+            flush=True,
+        )
+        if status_code != 200 or response_json.get("ok") is not True:
+            error_message = str(
+                response_json.get("message")
+                or response_json.get("detail")
+                or response_json.get("error")
+                or response_text
+                or "알 수 없는 오류"
+            )
+            await turn_context.send_activity(
+                "상·단품 이름 검색 요청에 실패했습니다.\n\n"
+                f"HTTP 상태: {status_code}\n내용: {error_message}"
+            )
+            return
+
+        await self.update_or_send_card(
+            turn_context,
+            create_product_name_results_card(
+                tool_name=tool_name,
+                selected_store_code=selected_store_code,
+                keyword=keyword,
+                response_json=response_json,
+                page=page,
+            ),
+        )
+
+    async def handle_product_search_name_select(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        tool_name = str(submit_value.get("tool", "")).strip()
+        selected_store_code = str(
+            submit_value.get("selected_store_code", "")
+        ).strip()
+        search_code = str(submit_value.get("search_code", "")).strip()
+        op_code = str(submit_value.get("op_code", "")).strip()
+        sale_type = str(submit_value.get("sale_type", "")).strip()
+
+        if tool_name not in (TOOL_PRODUCT_LOOKUP, TOOL_SINGLE_PRODUCT_LOOKUP):
+            await turn_context.send_activity("올바르지 않은 검색 도구입니다.")
+            return
+        if not selected_store_code or not search_code:
+            await turn_context.send_activity("선택한 조회 정보를 확인할 수 없습니다.")
+            return
+        if tool_name == TOOL_PRODUCT_LOOKUP and (not op_code or not sale_type):
+            await turn_context.send_activity(
+                "선택한 상품의 OP_CD 또는 SALE_TP를 확인할 수 없습니다."
+            )
+            return
+
+        await self.execute_product_search(
+            turn_context,
+            tool_name=tool_name,
+            selected_store_code=selected_store_code,
+            search_code=search_code,
+            op_code=op_code,
+            sale_type=sale_type,
+            update_source=True,
+        )
+
     async def handle_product_search_prepare_image(
         self,
         turn_context: TurnContext,
@@ -3565,6 +3901,8 @@ class RelayBot(ActivityHandler):
         tool_name: str,
         selected_store_code: str,
         search_code: str = "",
+        op_code: str = "",
+        sale_type: str = "",
         image_attachment: Optional[Attachment] = None,
         update_source: bool = False,
     ) -> None:
@@ -3624,6 +3962,8 @@ class RelayBot(ActivityHandler):
                 selected_store_code=selected_store_code,
                 item_type=item_type,
                 code=search_code,
+                op_code=op_code,
+                sale_type=sale_type,
                 image_bytes=image_bytes,
                 image_filename=image_filename,
                 image_content_type=image_content_type,
@@ -5481,6 +5821,20 @@ class RelayBot(ActivityHandler):
 
         if action == "product_search_code_submit":
             await self.handle_product_search_code_submit(
+                turn_context,
+                submit_value,
+            )
+            return
+
+        if action == "product_search_name_submit":
+            await self.handle_product_search_name_submit(
+                turn_context,
+                submit_value,
+            )
+            return
+
+        if action == "product_search_name_select":
+            await self.handle_product_search_name_select(
                 turn_context,
                 submit_value,
             )

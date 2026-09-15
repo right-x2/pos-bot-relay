@@ -27,6 +27,56 @@ def walk(value):
 
 
 class CardTransportTests(unittest.TestCase):
+    def test_product_name_search_input_and_item_candidates(self):
+        form = app.create_product_search_input_card(
+            app.TOOL_PRODUCT_LOOKUP,
+            {"assignedStoreCode": "210", "accessibleStoreCodes": ["210"]},
+        ).content
+        form_nodes = list(walk(form))
+        self.assertTrue(any(node.get("id") == "search_name" for node in form_nodes))
+        self.assertTrue(any(node.get("title") == "이름으로 검색" for node in form_nodes))
+
+        candidates = app.create_product_name_results_card(
+            tool_name=app.TOOL_PRODUCT_LOOKUP,
+            selected_store_code="210",
+            keyword="콜라",
+            response_json={
+                "ok": True,
+                "items": [
+                    {
+                        "itemName": f"콜라 {index}",
+                        "itemCode": f"88012345678{index:02d}",
+                        "opCode": "01",
+                        "saleType": "1",
+                    }
+                    for index in range(12)
+                ],
+            },
+            page=1,
+        ).content
+        actions = [node for node in walk(candidates)
+                   if node.get("type") == "Action.Submit"]
+        selections = [node for node in actions
+                      if node.get("data", {}).get("action") == "product_search_name_select"]
+        self.assertEqual(len(selections), 10)
+        self.assertEqual(selections[0]["data"]["op_code"], "01")
+        self.assertEqual(selections[0]["data"]["sale_type"], "1")
+        self.assertTrue(any(node.get("title") == "다음" for node in actions))
+
+    def test_plu_name_candidate_preserves_plu_code(self):
+        card = app.create_product_name_results_card(
+            tool_name=app.TOOL_SINGLE_PRODUCT_LOOKUP,
+            selected_store_code="210",
+            keyword="콜라",
+            response_json={"items": [{"pluName": "콜라 500ml", "pluCode": "880123"}]},
+        ).content
+        selection = next(
+            node for node in walk(card)
+            if node.get("data", {}).get("action") == "product_search_name_select"
+        )
+        self.assertEqual(selection["data"]["search_code"], "880123")
+        self.assertEqual(selection["data"]["op_code"], "")
+
     def test_refund_status_cards_show_each_backend_status(self):
         original = {
             "storeCode": "210", "saleDate": "20260915",
@@ -88,6 +138,7 @@ class CardTransportTests(unittest.TestCase):
     def test_all_card_builders_use_baseline_submit(self):
         samples = {
             "store_access": {"assignedStoreCode": "210", "accessibleStoreCodes": ["210"]},
+            "selected_store_code": "210", "keyword": "콜라", "page": 1,
             "tool_name": app.TOOL_SINGLE_PRODUCT_LOOKUP,
             "response_json": {"found": True, "hasNext": True, "hasPrevious": True,
                               "page": 2, "totalPages": 3, "posNo": "0701",
@@ -133,6 +184,77 @@ class CardTransportTests(unittest.TestCase):
 
 
 class DispatchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_name_search_requires_two_characters(self):
+        bot = app.RelayBot()
+        context = TurnContext(TestAdapter(), Activity(type="message"))
+        context.send_activity = AsyncMock()
+        with patch.object(app, "search_items_by_name", new=AsyncMock()) as search:
+            await bot.handle_product_search_name_submit(
+                context,
+                {"tool": app.TOOL_PRODUCT_LOOKUP,
+                 "selected_store_code": "210", "search_name": "콜"},
+            )
+        search.assert_not_awaited()
+        self.assertIn("최소 2글자", context.send_activity.await_args.args[0])
+
+    async def test_name_search_calls_new_api_and_renders_candidates(self):
+        bot = app.RelayBot()
+        bot.update_or_send_card = AsyncMock()
+        context = TurnContext(TestAdapter(), Activity(type="message"))
+        with (
+            patch.object(app, "get_teams_account", new=AsyncMock(
+                return_value=("kimjungwoo", "사용자"))),
+            patch.object(app, "search_items_by_name", new=AsyncMock(
+                return_value={
+                    "status": 200,
+                    "response_text": '{"ok":true}',
+                    "response_json": {
+                        "ok": True,
+                        "items": [{
+                            "itemName": "콜라", "itemCode": "8801234567890",
+                            "opCode": "01", "saleType": "1",
+                        }],
+                    },
+                })) as search,
+        ):
+            await bot.handle_product_search_name_submit(
+                context,
+                {"tool": app.TOOL_PRODUCT_LOOKUP,
+                 "selected_store_code": "210", "search_name": "콜라"},
+            )
+        search.assert_awaited_once_with(
+            target_url=app.CONFIG.ITEM_NAME_SEARCH_API_URL,
+            user_id="kimjungwoo",
+            selected_store_code="210",
+            item_type="상품",
+            keyword="콜라",
+        )
+        bot.update_or_send_card.assert_awaited_once()
+
+    async def test_selected_item_calls_detail_with_exact_item_keys(self):
+        bot = app.RelayBot()
+        bot.execute_product_search = AsyncMock()
+        context = TurnContext(TestAdapter(), Activity(type="message"))
+        await bot.handle_product_search_name_select(
+            context,
+            {
+                "tool": app.TOOL_PRODUCT_LOOKUP,
+                "selected_store_code": "210",
+                "search_code": "8801234567890",
+                "op_code": "01",
+                "sale_type": "1",
+            },
+        )
+        bot.execute_product_search.assert_awaited_once_with(
+            context,
+            tool_name=app.TOOL_PRODUCT_LOOKUP,
+            selected_store_code="210",
+            search_code="8801234567890",
+            op_code="01",
+            sale_type="1",
+            update_source=True,
+        )
+
     async def test_native_submit_http_response_is_201(self):
         bot = app.RelayBot()
         bot.handle_pattern_search_submit = AsyncMock()
@@ -158,6 +280,8 @@ class DispatchTests(unittest.IsolatedAsyncioTestCase):
             "general_top_question_select": "handle_general_top_question_select",
             "pos_master_create_submit": "handle_pos_master_create_submit",
             "product_search_code_submit": "handle_product_search_code_submit",
+            "product_search_name_submit": "handle_product_search_name_submit",
+            "product_search_name_select": "handle_product_search_name_select",
             "product_search_prepare_image": "handle_product_search_prepare_image",
             "pattern_search_submit": "handle_pattern_search_submit",
             "pattern_search_page": "handle_pattern_search_submit",
