@@ -6,6 +6,7 @@ $RegisterUrl = "http://10.103.201.164:8000/api/posts/request"
 $ImageChatUrl = "http://10.103.201.164:8000/api/rag/image-chat"
 $FeedbackUrl = "http://10.103.201.164:8000/api/logs/help-yn"
 $ItemSearchUrl = "http://10.103.201.164:8000/api/items/search"
+$ItemNameSearchUrl = "http://10.103.201.164:8000/api/items/search-by-name"
 $StoreAccessUrl = "http://10.103.201.164:8000/tools/store_access"
 $PosMasterUrl = "http://10.103.201.164:8000/tools/create_pos_master"
 $PatternSearchUrl = "http://10.103.201.164:8000/tools/pattern_lookup"
@@ -113,6 +114,7 @@ try {
     Write-Host "Image    : $ImageChatUrl"
     Write-Host "Feedback : $FeedbackUrl"
     Write-Host "Item     : $ItemSearchUrl"
+    Write-Host "ItemName : $ItemNameSearchUrl"
     Write-Host "PosMaster: $PosMasterUrl"
     Write-Host "Pattern  : $PatternSearchUrl"
     Write-Host "PtnUpdate: $PatternUpdateUrl"
@@ -149,6 +151,7 @@ try {
                     imageUrl = $ImageChatUrl
                     feedbackUrl = $FeedbackUrl
                     itemSearchUrl = $ItemSearchUrl
+                    itemNameSearchUrl = $ItemNameSearchUrl
                     storeAccessUrl = $StoreAccessUrl
                     posMasterUrl = $PosMasterUrl
                     patternSearchUrl = $PatternSearchUrl
@@ -178,11 +181,16 @@ try {
 
             if (
                 ($Path -eq "/image-chat") -or
-                ($Path -eq "/api/items/search")
+                ($Path -eq "/api/items/search") -or
+                ($Path -eq "/api/items/search-by-name")
             ) {
                 $IncomingContentType = [string]$Request.ContentType
 
-                if ($Path -eq "/api/items/search") {
+                if ($Path -eq "/api/items/search-by-name") {
+                    $BinaryTargetUrl = $ItemNameSearchUrl
+                    $BinaryRouteName = "items-search-by-name"
+                }
+                elseif ($Path -eq "/api/items/search") {
                     $BinaryTargetUrl = $ItemSearchUrl
                     $BinaryRouteName = "items-search"
                 }
