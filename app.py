@@ -343,27 +343,49 @@ def is_barcode_image_attachment(
 
 
 def normalize_adaptive_card_for_teams_mobile(node) -> None:
-    """Use Universal Actions so Teams mobile submits card actions reliably."""
+    """Use baseline cards and native Submit (message activity with inputs).
+
+    Do not attach msteams imBack/messageBack or upgrade to Execute here:
+    those change the transport for every nested form and result action.
+    Required fields are also checked by the server handlers.
+    """
     if isinstance(node, dict):
         if node.get("type") == "AdaptiveCard":
-            node["version"] = "1.5"
+            node["version"] = "1.2"
 
-        if node.get("type") == "Action.Submit":
+        if node.get("type") in {"Action.Submit", "Action.Execute"}:
+            node["type"] = "Action.Submit"
+            for key in ("verb", "fallback", "associatedInputs", "requires"):
+                node.pop(key, None)
             action_data = node.get("data")
             if isinstance(action_data, dict):
                 action_data.pop("msteams", None)
-                action_name = str(action_data.get("action", "") or "").strip()
-                if action_name:
-                    node["type"] = "Action.Execute"
-                    node.setdefault("verb", action_name)
+
+        if str(node.get("type", "")).startswith("Input."):
+            for key in ("isRequired", "errorMessage", "label"):
+                node.pop(key, None)
 
         for value in node.values():
             normalize_adaptive_card_for_teams_mobile(value)
         return
 
     if isinstance(node, list):
+        # Input.label was added in 1.3. Render it as a visible TextBlock so
+        # lowering the schema does not remove field names from the forms.
+        expanded = []
         for value in node:
+            if isinstance(value, dict) and str(value.get("type", "")).startswith("Input."):
+                label = value.get("label")
+                if label:
+                    expanded.append({
+                        "type": "TextBlock",
+                        "text": str(label) + (" *" if value.get("isRequired") else ""),
+                        "wrap": True,
+                        "spacing": "Medium",
+                    })
             normalize_adaptive_card_for_teams_mobile(value)
+            expanded.append(value)
+        node[:] = expanded
 
 
 def extract_card_submit_value(raw_value) -> dict:
@@ -421,7 +443,7 @@ def extract_card_submit_value(raw_value) -> dict:
 
 
 def allow_tool_menu_without_input_validation(node) -> None:
-    """Retained for callers; mobile normalization removes 1.3 validation."""
+    """Retained for callers; baseline normalization removes 1.3 validation."""
     if isinstance(node, dict):
         action_data = node.get("data")
         if (
@@ -4948,9 +4970,9 @@ class RelayBot(ActivityHandler):
             flush=True,
         )
         try:
-            # Process within the invoke turn. Return a plain InvokeResponse so
-            # older botbuilder SDK versions do not try to serialize the nested
-            # AdaptiveCardInvokeResponse model after the card was updated.
+            # Compatibility for cards already posted with Action.Execute.
+            # New cards use native Submit; the SDK still requires a model
+            # with an object-valued payload when handling an old invoke.
             await self.on_message_activity(turn_context)
         except Exception as error:
             print(
@@ -5358,6 +5380,12 @@ class RelayBot(ActivityHandler):
         action = str(
             submit_value.get("action", "")
         )
+
+        if action:
+            print(
+                f"[CARD ACTION] transport={activity.type} action={action[:80]}",
+                flush=True,
+            )
 
         if action == "tool_menu":
             await self.handle_tool_menu(
