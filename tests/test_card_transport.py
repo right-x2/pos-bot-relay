@@ -27,6 +27,13 @@ def walk(value):
 
 
 class CardTransportTests(unittest.TestCase):
+    def test_tool_menu_keeps_all_buttons_on_one_compact_card(self):
+        card = app.create_tool_menu_card()
+        self.assertEqual(card.content_type, "application/vnd.microsoft.card.hero")
+        self.assertNotIn("text", card.content)
+        self.assertEqual(len(card.content["buttons"]), 6)
+        self.assertEqual(card.content["buttons"][-1]["title"], "카테고리별 FAQ")
+
     def test_all_card_builders_use_baseline_submit(self):
         samples = {
             "store_access": {"assignedStoreCode": "210", "accessibleStoreCodes": ["210"]},

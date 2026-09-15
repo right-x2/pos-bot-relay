@@ -604,7 +604,6 @@ def create_tool_menu_card() -> Attachment:
         content_type="application/vnd.microsoft.card.hero",
         content={
             "title": "POS 업무 도구",
-            "text": "업무를 선택해주세요. 버튼이 동작하지 않으면 업무명을 채팅으로 입력해주세요. (메뉴 v2)",
             "buttons": [
                 {
                     "type": "imBack",
