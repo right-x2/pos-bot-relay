@@ -1,6 +1,6 @@
 Add-Type -AssemblyName System.Net.Http
 
-$RelayVersion = "2026-09-15-item-name-v1"
+$RelayVersion = "2026-09-16-hpoint-event-v1"
 $ListenPort = 30002
 $ChatUrl = "http://10.103.201.164:8000/api/rag/chat"
 $RegisterUrl = "http://10.103.201.164:8000/api/posts/request"
@@ -14,6 +14,7 @@ $PatternSearchUrl = "http://10.103.201.164:8000/tools/pattern_lookup"
 $PatternUpdateUrl = "http://10.103.201.164:8000/tools/pattern_update"
 $RefundStatusUrl = "http://10.103.201.164:8000/tools/refund_status"
 $RefundCancelUrl = "http://10.103.201.164:8000/tools/refund_cancel"
+$HpointEventLookupUrl = "http://10.103.201.164:8000/tools/hpoint_event_lookup"
 $FamilySaleUrl = "http://10.103.201.164:8000/tools/family_sale_sales"
 $TopFaqQuestionsUrl = "http://10.103.201.164:8000/api/faqs/top-questions"
 
@@ -124,6 +125,7 @@ try {
     Write-Host "PtnUpdate: $PatternUpdateUrl"
     Write-Host "Refund   : $RefundStatusUrl"
     Write-Host "RfndCancel: $RefundCancelUrl"
+    Write-Host "HPointEvt: $HpointEventLookupUrl"
     Write-Host "FamilySale: $FamilySaleUrl"
     Write-Host "Top FAQ  : $TopFaqQuestionsUrl"
     Write-Host "Stop     : Ctrl+C"
@@ -167,6 +169,7 @@ try {
                     patternUpdateUrl = $PatternUpdateUrl
                     refundStatusUrl = $RefundStatusUrl
                     refundCancelUrl = $RefundCancelUrl
+                    hpointEventLookupUrl = $HpointEventLookupUrl
                     familySaleUrl = $FamilySaleUrl
                     topFaqQuestionsUrl = $TopFaqQuestionsUrl
                     serverTime = $Now
@@ -480,6 +483,34 @@ try {
                     saleDate = $SaleDate
                     posNo = $PosNo
                     dealNo = $DealNo
+                } | ConvertTo-Json -Depth 20 -Compress
+            }
+            elseif ($Path -eq "/tools/hpoint_event_lookup") {
+                $TargetUrl = $HpointEventLookupUrl
+
+                $UserId = ([string]$Incoming.userId).Trim()
+                $SelectedStoreCode = ([string]$Incoming.selectedStoreCode).Trim()
+                if ([string]::IsNullOrWhiteSpace($UserId)) {
+                    throw "Missing userId"
+                }
+                if ([string]::IsNullOrWhiteSpace($SelectedStoreCode)) {
+                    throw "Missing selectedStoreCode"
+                }
+
+                $Page = 1
+                if ($null -ne $Incoming.page) {
+                    if (-not [int]::TryParse([string]$Incoming.page, [ref]$Page)) {
+                        throw "page must be an integer"
+                    }
+                }
+                if ($Page -lt 1) {
+                    throw "page must be 1 or greater"
+                }
+
+                $ForwardBody = [ordered]@{
+                    userId = $UserId
+                    selectedStoreCode = $SelectedStoreCode
+                    page = $Page
                 } | ConvertTo-Json -Depth 20 -Compress
             }
             elseif ($Path -eq "/tools/family_sale_sales") {

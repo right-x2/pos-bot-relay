@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import sys
 import traceback
 import uuid
@@ -18,6 +19,7 @@ from family_sale_display import format_amount, format_change_rate
 from item_display import format_item_use_period, format_product_result_value
 from item_search import search_items, search_items_by_name
 from faq_questions import fetch_top_faq_questions
+from hpoint_event import fetch_hpoint_events
 from pattern_search import search_patterns
 from pattern_update import update_pattern
 from refund_status import request_refund_operation
@@ -71,6 +73,7 @@ TOOL_SINGLE_PRODUCT_LOOKUP = "single_product_lookup"
 TOOL_PATTERN_SEARCH = "pattern_search"
 TOOL_PATTERN_UPDATE = "pattern_update"
 TOOL_REFUND_STATUS = "refund_status"
+TOOL_HPOINT_EVENT_LOOKUP = "hpoint_event_lookup"
 TOOL_FAMILY_SALE_SALES = "family_sale_sales"
 TOOL_GENERAL_CHAT = "general_chat"
 
@@ -197,6 +200,11 @@ class Config:
     REFUND_CANCEL_API_URL = os.getenv(
         "REFUND_CANCEL_API_URL",
         "http://123.111.174.78:30002/tools/refund_cancel",
+    )
+
+    HPOINT_EVENT_LOOKUP_API_URL = os.getenv(
+        "HPOINT_EVENT_LOOKUP_API_URL",
+        "http://123.111.174.78:30002/tools/hpoint_event_lookup",
     )
 
     FAMILY_SALE_API_URL = os.getenv(
@@ -1854,6 +1862,146 @@ def create_refund_cancel_result_card(response_json: dict) -> Attachment:
                     "data": {"action": "tool_menu"},
                 },
             ],
+        }
+    )
+
+
+def parse_hpoint_event_page(message: str) -> Optional[int]:
+    compact = re.sub(r"\s+", "", str(message or "")).lower()
+    if not compact:
+        return None
+
+    is_event_query = any(
+        phrase in compact
+        for phrase in (
+            "현재진행중인사은행사",
+            "현재진행중인행사",
+            "진행중인사은행사",
+        )
+    ) or bool(re.fullmatch(r"사은행사\d+페이지(?:조회)?", compact))
+    if not is_event_query:
+        return None
+
+    page_match = re.search(r"(\d+)페이지", compact)
+    return int(page_match.group(1)) if page_match else 1
+
+
+def create_hpoint_event_result_card(response_json: dict) -> Attachment:
+    def safe_int(value, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    store_code = str(response_json.get("storeCode") or "").strip()
+    page = max(safe_int(response_json.get("page"), 1), 1)
+    page_size = max(safe_int(response_json.get("pageSize"), 10), 1)
+    total_count = max(safe_int(response_json.get("totalCount"), 0), 0)
+    total_pages = max(safe_int(response_json.get("totalPages"), 0), 0)
+    events = response_json.get("events")
+    if not isinstance(events, list):
+        events = []
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": "현재 진행 중인 사은행사",
+            "weight": "Bolder",
+            "size": "Medium",
+            "wrap": True,
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "조회 점포", "value": store_code or "-"},
+                {"title": "조회 결과", "value": f"총 {total_count}건"},
+                {
+                    "title": "페이지",
+                    "value": f"{page} / {max(total_pages, 1)} ({page_size}건 단위)",
+                },
+            ],
+        },
+    ]
+
+    event_names = []
+    for event in events[:page_size]:
+        if not isinstance(event, dict):
+            continue
+        event_name = str(event.get("eventName") or "").strip()
+        if event_name:
+            event_names.append(event_name)
+
+    if event_names:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": "\n".join(
+                    f"{index}. {event_name}"
+                    for index, event_name in enumerate(event_names, start=1)
+                ),
+                "wrap": True,
+                "spacing": "Medium",
+            }
+        )
+    else:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": "현재 진행 중인 사은행사가 없습니다.",
+                "color": "Warning",
+                "wrap": True,
+                "spacing": "Medium",
+            }
+        )
+
+    common_data = {
+        "action": "hpoint_event_page",
+        "tool": TOOL_HPOINT_EVENT_LOOKUP,
+        "selected_store_code": store_code,
+    }
+    actions = []
+    has_previous = response_json.get("hasPrevious")
+    has_next = response_json.get("hasNext")
+    if has_previous is True or (has_previous is None and page > 1):
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "이전",
+                "data": {**common_data, "page": page - 1},
+            }
+        )
+    if has_next is True or (
+        has_next is None and total_pages > 0 and page < total_pages
+    ):
+        actions.append(
+            {
+                "type": "Action.Submit",
+                "title": "다음",
+                "data": {**common_data, "page": page + 1},
+            }
+        )
+    actions.extend(
+        [
+            {
+                "type": "Action.Submit",
+                "title": "다시 조회",
+                "data": {**common_data, "page": 1},
+            },
+            {
+                "type": "Action.Submit",
+                "title": "도구 메뉴",
+                "data": {"action": "tool_menu"},
+            },
+        ]
+    )
+
+    return adaptive_attachment(
+        {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.3",
+            "body": body,
+            "actions": actions,
         }
     )
 
@@ -4207,6 +4355,108 @@ class RelayBot(ActivityHandler):
             ),
         )
 
+    async def handle_hpoint_event_lookup(
+        self,
+        turn_context: TurnContext,
+        submit_value: dict,
+    ) -> None:
+        try:
+            page = int(submit_value.get("page", 1) or 1)
+        except (TypeError, ValueError):
+            page = 0
+        if page < 1:
+            await turn_context.send_activity("페이지 번호가 올바르지 않습니다.")
+            return
+
+        teams_account_id, _ = await get_teams_account(turn_context)
+        if not teams_account_id:
+            await turn_context.send_activity(
+                "Teams 계정 아이디를 확인하지 못해 행사 조회를 처리할 수 없습니다."
+            )
+            return
+
+        selected_store_code = str(
+            submit_value.get("selected_store_code") or ""
+        ).strip()
+        if not selected_store_code:
+            store_access = await self.get_store_access_for_user(turn_context)
+            if store_access is None:
+                return
+            selected_store_code = str(
+                store_access.get("assignedStoreCode") or ""
+            ).strip()
+        if not selected_store_code:
+            await turn_context.send_activity("기본점포를 확인하지 못했습니다.")
+            return
+
+        print(
+            "[HPOINT EVENT API REQUEST]"
+            f" store_code={selected_store_code}"
+            f" page={page} user_id={teams_account_id}",
+            flush=True,
+        )
+        typing_stop_event = asyncio.Event()
+        typing_task = asyncio.create_task(keep_typing(turn_context, typing_stop_event))
+        try:
+            api_result = await fetch_hpoint_events(
+                target_url=CONFIG.HPOINT_EVENT_LOOKUP_API_URL,
+                user_id=teams_account_id,
+                selected_store_code=selected_store_code,
+                page=page,
+            )
+        except Exception as error:
+            print(
+                "[HPOINT EVENT API ERROR]"
+                f" type={type(error).__name__} message={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
+            await turn_context.send_activity(
+                "진행 중인 행사 조회 중 오류가 발생했습니다.\n\n"
+                f"{type(error).__name__}: {error}"
+            )
+            return
+        finally:
+            typing_stop_event.set()
+            try:
+                await typing_task
+            except Exception as typing_error:
+                print(
+                    "[HPOINT EVENT TYPING TASK ERROR]"
+                    f" type={type(typing_error).__name__} message={typing_error}",
+                    flush=True,
+                )
+
+        status_code = int(api_result.get("status", 0) or 0)
+        response_text = str(api_result.get("response_text") or "")
+        response_json = api_result.get("response_json")
+        if not isinstance(response_json, dict):
+            response_json = {}
+        print(
+            "[HPOINT EVENT API RESPONSE]"
+            f" status={status_code} body={response_text[:1000]}",
+            flush=True,
+        )
+        if status_code != 200 or response_json.get("ok") is not True:
+            error_message = str(
+                response_json.get("message")
+                or response_json.get("detail")
+                or response_json.get("error")
+                or response_text
+                or "알 수 없는 오류"
+            )
+            await turn_context.send_activity(
+                "진행 중인 행사 조회 요청에 실패했습니다.\n\n"
+                f"HTTP 상태: {status_code}\n내용: {error_message}"
+            )
+            return
+
+        await self.update_or_send_card(
+            turn_context,
+            create_hpoint_event_result_card(response_json),
+        )
+
     async def handle_pattern_search_submit(
         self,
         turn_context: TurnContext,
@@ -5847,6 +6097,13 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        if action == "hpoint_event_page":
+            await self.handle_hpoint_event_lookup(
+                turn_context,
+                submit_value,
+            )
+            return
+
         if action in (
             "pattern_search_submit",
             "pattern_search_page",
@@ -6052,6 +6309,15 @@ class RelayBot(ActivityHandler):
             )
             return
 
+        hpoint_event_page = parse_hpoint_event_page(mention_removed)
+        if hpoint_event_page is not None:
+            self.clear_pending_search_tool(turn_context)
+            await self.handle_hpoint_event_lookup(
+                turn_context,
+                {"page": hpoint_event_page},
+            )
+            return
+
         if compact_command in {
             "@등록",
             "등록",
@@ -6133,6 +6399,9 @@ async def health(
             "register_api_url": CONFIG.REGISTER_API_URL,
             "top_faq_questions_api_url": (
                 CONFIG.TOP_FAQ_QUESTIONS_API_URL
+            ),
+            "hpoint_event_lookup_api_url": (
+                CONFIG.HPOINT_EVENT_LOOKUP_API_URL
             ),
             "server_time": datetime.now(
                 KST

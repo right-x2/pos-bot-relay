@@ -27,6 +27,37 @@ def walk(value):
 
 
 class CardTransportTests(unittest.TestCase):
+    def test_hpoint_event_query_parser_and_paging_card(self):
+        self.assertEqual(app.parse_hpoint_event_page("현재 진행중인 사은행사"), 1)
+        self.assertEqual(app.parse_hpoint_event_page("현재 진행중인 행사 2페이지"), 2)
+        self.assertEqual(app.parse_hpoint_event_page("사은행사 3페이지 조회"), 3)
+        self.assertIsNone(app.parse_hpoint_event_page("다음 행사 일정 알려줘"))
+
+        card = app.create_hpoint_event_result_card({
+            "ok": True,
+            "storeCode": "220",
+            "page": 1,
+            "pageSize": 10,
+            "totalCount": 24,
+            "totalPages": 3,
+            "hasPrevious": False,
+            "hasNext": True,
+            "events": [
+                {"eventName": "H.Point 사은행사"},
+                {"eventName": "금액대별 사은 행사"},
+            ],
+        }).content
+        nodes = list(walk(card))
+        texts = [node.get("text") for node in nodes if node.get("type") == "TextBlock"]
+        self.assertTrue(any("H.Point 사은행사" in str(text) for text in texts))
+        next_action = next(
+            node for node in nodes
+            if node.get("data", {}).get("action") == "hpoint_event_page"
+            and node.get("title") == "다음"
+        )
+        self.assertEqual(next_action["data"]["page"], 2)
+        self.assertEqual(next_action["data"]["selected_store_code"], "220")
+
     def test_product_name_search_input_and_item_candidates(self):
         form = app.create_product_search_input_card(
             app.TOOL_PRODUCT_LOOKUP,
@@ -283,6 +314,7 @@ class DispatchTests(unittest.IsolatedAsyncioTestCase):
             "product_search_name_submit": "handle_product_search_name_submit",
             "product_search_name_select": "handle_product_search_name_select",
             "product_search_prepare_image": "handle_product_search_prepare_image",
+            "hpoint_event_page": "handle_hpoint_event_lookup",
             "pattern_search_submit": "handle_pattern_search_submit",
             "pattern_search_page": "handle_pattern_search_submit",
             "pattern_update_submit": "handle_pattern_update_submit",

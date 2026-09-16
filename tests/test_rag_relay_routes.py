@@ -28,6 +28,17 @@ class RagRelayRouteTests(unittest.TestCase):
         self.assertIn('Write-Host "Version  : $RelayVersion"', SCRIPT)
         self.assertIn('Write-Host "Store    : $StoreAccessUrl"', SCRIPT)
 
+    def test_hpoint_event_lookup_is_explicitly_routed(self):
+        self.assertIn(
+            '$HpointEventLookupUrl = "http://10.103.201.164:8000/tools/hpoint_event_lookup"',
+            SCRIPT,
+        )
+        route = 'elseif ($Path -eq "/tools/hpoint_event_lookup")'
+        chat_route = 'elseif (($Path -eq "/test") -or ($Path -eq "/api/rag/chat"))'
+        self.assertIn(route, SCRIPT)
+        self.assertIn('$TargetUrl = $HpointEventLookupUrl', SCRIPT)
+        self.assertLess(SCRIPT.index(route), SCRIPT.index(chat_route))
+
 
 if __name__ == "__main__":
     unittest.main()
