@@ -43,6 +43,7 @@ class HpointEventRequestTests(unittest.IsolatedAsyncioTestCase):
                 target_url="http://example/tools/hpoint_event_lookup",
                 user_id=" kimjungwoo ",
                 selected_store_code=" 220 ",
+                search_value=" H.Point ",
                 page=2,
             )
 
@@ -52,6 +53,7 @@ class HpointEventRequestTests(unittest.IsolatedAsyncioTestCase):
             {
                 "userId": "kimjungwoo",
                 "selectedStoreCode": "220",
+                "searchValue": "H.Point",
                 "page": 2,
             },
         )
@@ -62,6 +64,7 @@ class HpointEventRequestTests(unittest.IsolatedAsyncioTestCase):
                 target_url="http://example/tools/hpoint_event_lookup",
                 user_id="kimjungwoo",
                 selected_store_code="220",
+                search_value="",
                 page=0,
             )
 

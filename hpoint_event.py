@@ -9,6 +9,7 @@ async def fetch_hpoint_events(
     target_url: str,
     user_id: str,
     selected_store_code: str,
+    search_value: str,
     page: int,
 ) -> dict[str, Any]:
     normalized_user_id = user_id.strip()
@@ -28,6 +29,7 @@ async def fetch_hpoint_events(
             json={
                 "userId": normalized_user_id,
                 "selectedStoreCode": normalized_store_code,
+                "searchValue": search_value.strip(),
                 "page": page,
             },
         ) as response:

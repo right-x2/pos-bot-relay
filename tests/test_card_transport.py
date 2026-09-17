@@ -28,6 +28,7 @@ def walk(value):
 
 class CardTransportTests(unittest.TestCase):
     def test_hpoint_event_query_parser_and_paging_card(self):
+        self.assertEqual(app.parse_hpoint_event_page("사은행사조회"), 1)
         self.assertEqual(app.parse_hpoint_event_page("현재 진행중인 사은행사"), 1)
         self.assertEqual(app.parse_hpoint_event_page("현재 진행중인 행사 2페이지"), 2)
         self.assertEqual(app.parse_hpoint_event_page("사은행사 3페이지 조회"), 3)
@@ -36,6 +37,7 @@ class CardTransportTests(unittest.TestCase):
         card = app.create_hpoint_event_result_card({
             "ok": True,
             "storeCode": "220",
+            "searchValue": "H.Point",
             "page": 1,
             "pageSize": 10,
             "totalCount": 24,
@@ -57,6 +59,19 @@ class CardTransportTests(unittest.TestCase):
         )
         self.assertEqual(next_action["data"]["page"], 2)
         self.assertEqual(next_action["data"]["selected_store_code"], "220")
+        self.assertEqual(next_action["data"]["search_value"], "H.Point")
+
+    def test_hpoint_event_tool_form_supports_keyword_and_full_lookup(self):
+        card = app.create_hpoint_event_search_card({
+            "assignedStoreCode": "220",
+            "accessibleStoreCodes": ["220", "260"],
+        }).content
+        nodes = list(walk(card))
+        self.assertTrue(any(node.get("id") == "search_value" for node in nodes))
+        self.assertTrue(any(node.get("id") == "selected_store_code" for node in nodes))
+        actions = [node for node in nodes if node.get("type") == "Action.Submit"]
+        self.assertTrue(any(node.get("title") == "검색" for node in actions))
+        self.assertTrue(any(node.get("title") == "전체 조회" for node in actions))
 
     def test_product_name_search_input_and_item_candidates(self):
         form = app.create_product_search_input_card(
@@ -163,7 +178,11 @@ class CardTransportTests(unittest.TestCase):
         card = app.create_tool_menu_card()
         self.assertEqual(card.content_type, "application/vnd.microsoft.card.hero")
         self.assertNotIn("text", card.content)
-        self.assertEqual(len(card.content["buttons"]), 6)
+        self.assertEqual(len(card.content["buttons"]), 7)
+        self.assertTrue(any(
+            button["title"] == "사은행사 조회"
+            for button in card.content["buttons"]
+        ))
         self.assertEqual(card.content["buttons"][-1]["title"], "카테고리별 FAQ")
 
     def test_all_card_builders_use_baseline_submit(self):
@@ -314,6 +333,7 @@ class DispatchTests(unittest.IsolatedAsyncioTestCase):
             "product_search_name_submit": "handle_product_search_name_submit",
             "product_search_name_select": "handle_product_search_name_select",
             "product_search_prepare_image": "handle_product_search_prepare_image",
+            "hpoint_event_search": "handle_hpoint_event_lookup",
             "hpoint_event_page": "handle_hpoint_event_lookup",
             "pattern_search_submit": "handle_pattern_search_submit",
             "pattern_search_page": "handle_pattern_search_submit",

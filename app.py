@@ -85,6 +85,7 @@ STORE_ROUTED_TOOLS = {
     TOOL_PATTERN_SEARCH,
     TOOL_PATTERN_UPDATE,
     TOOL_REFUND_STATUS,
+    TOOL_HPOINT_EVENT_LOOKUP,
 }
 
 TOOL_TITLES = {
@@ -95,6 +96,7 @@ TOOL_TITLES = {
     TOOL_PATTERN_SEARCH: "패턴 조회",
     TOOL_PATTERN_UPDATE: "패턴 수정",
     TOOL_REFUND_STATUS: "반품 상태조회",
+    TOOL_HPOINT_EVENT_LOOKUP: "사은행사 조회",
     TOOL_FAMILY_SALE_SALES: "2026 한섬패밀리세일 매출조회",
     TOOL_GENERAL_CHAT: "카테고리별 FAQ",
 }
@@ -598,6 +600,14 @@ def create_tool_menu_card() -> Attachment:
                 "data": {
                     "action": "tool_select",
                     "tool": TOOL_REFUND_STATUS,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "사은행사 조회",
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_HPOINT_EVENT_LOOKUP,
                 },
             },
             {
@@ -1866,6 +1876,77 @@ def create_refund_cancel_result_card(response_json: dict) -> Attachment:
     )
 
 
+def create_hpoint_event_search_card(store_access: dict) -> Attachment:
+    body = [
+        {
+            "type": "TextBlock",
+            "text": "사은행사 조회",
+            "weight": "Bolder",
+            "size": "Medium",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": "현재 진행 중인 사은행사를 전체 조회하거나 행사명으로 검색합니다.",
+            "isSubtle": True,
+            "wrap": True,
+        },
+    ]
+    body.extend(create_store_access_elements(store_access))
+    body.extend(
+        [
+            {
+                "type": "TextBlock",
+                "text": "검색어 (선택)",
+                "weight": "Bolder",
+                "spacing": "Medium",
+            },
+            {
+                "type": "Input.Text",
+                "id": "search_value",
+                "placeholder": "예: H.Point (최소 2글자)",
+                "maxLength": 100,
+            },
+        ]
+    )
+    return adaptive_attachment(
+        {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard",
+            "version": "1.3",
+            "body": body,
+            "actions": [
+                {
+                    "type": "Action.Submit",
+                    "title": "검색",
+                    "style": "positive",
+                    "data": {
+                        "action": "hpoint_event_search",
+                        "tool": TOOL_HPOINT_EVENT_LOOKUP,
+                        "search_mode": "keyword",
+                        "page": 1,
+                    },
+                },
+                {
+                    "type": "Action.Submit",
+                    "title": "전체 조회",
+                    "data": {
+                        "action": "hpoint_event_search",
+                        "tool": TOOL_HPOINT_EVENT_LOOKUP,
+                        "search_mode": "all",
+                        "page": 1,
+                    },
+                },
+                {
+                    "type": "Action.Submit",
+                    "title": "도구 메뉴",
+                    "data": {"action": "tool_menu"},
+                },
+            ],
+        }
+    )
+
+
 def parse_hpoint_event_page(message: str) -> Optional[int]:
     compact = re.sub(r"\s+", "", str(message or "")).lower()
     if not compact:
@@ -1874,6 +1955,9 @@ def parse_hpoint_event_page(message: str) -> Optional[int]:
     is_event_query = any(
         phrase in compact
         for phrase in (
+            "사은행사조회",
+            "현재행사조회",
+            "진행행사조회",
             "현재진행중인사은행사",
             "현재진행중인행사",
             "진행중인사은행사",
@@ -1894,6 +1978,7 @@ def create_hpoint_event_result_card(response_json: dict) -> Attachment:
             return default
 
     store_code = str(response_json.get("storeCode") or "").strip()
+    search_value = str(response_json.get("searchValue") or "").strip()
     page = max(safe_int(response_json.get("page"), 1), 1)
     page_size = max(safe_int(response_json.get("pageSize"), 10), 1)
     total_count = max(safe_int(response_json.get("totalCount"), 0), 0)
@@ -1912,14 +1997,26 @@ def create_hpoint_event_result_card(response_json: dict) -> Attachment:
         },
         {
             "type": "FactSet",
-            "facts": [
-                {"title": "조회 점포", "value": store_code or "-"},
-                {"title": "조회 결과", "value": f"총 {total_count}건"},
-                {
-                    "title": "페이지",
-                    "value": f"{page} / {max(total_pages, 1)} ({page_size}건 단위)",
-                },
-            ],
+            "facts": (
+                [
+                    {"title": "조회 점포", "value": store_code or "-"},
+                    {"title": "검색어", "value": search_value},
+                    {"title": "조회 결과", "value": f"총 {total_count}건"},
+                    {
+                        "title": "페이지",
+                        "value": f"{page} / {max(total_pages, 1)} ({page_size}건 단위)",
+                    },
+                ]
+                if search_value
+                else [
+                    {"title": "조회 점포", "value": store_code or "-"},
+                    {"title": "조회 결과", "value": f"총 {total_count}건"},
+                    {
+                        "title": "페이지",
+                        "value": f"{page} / {max(total_pages, 1)} ({page_size}건 단위)",
+                    },
+                ]
+            ),
         },
     ]
 
@@ -1958,6 +2055,7 @@ def create_hpoint_event_result_card(response_json: dict) -> Attachment:
         "action": "hpoint_event_page",
         "tool": TOOL_HPOINT_EVENT_LOOKUP,
         "selected_store_code": store_code,
+        "search_value": search_value,
     }
     actions = []
     has_previous = response_json.get("hasPrevious")
@@ -1985,7 +2083,10 @@ def create_hpoint_event_result_card(response_json: dict) -> Attachment:
             {
                 "type": "Action.Submit",
                 "title": "다시 조회",
-                "data": {**common_data, "page": 1},
+                "data": {
+                    "action": "tool_select",
+                    "tool": TOOL_HPOINT_EVENT_LOOKUP,
+                },
             },
             {
                 "type": "Action.Submit",
@@ -3769,6 +3870,9 @@ class RelayBot(ActivityHandler):
                 turn_context
             )
             attachment = create_refund_status_form_card(store_access)
+        elif tool_name == TOOL_HPOINT_EVENT_LOOKUP:
+            self.clear_pending_search_tool(turn_context)
+            attachment = create_hpoint_event_search_card(store_access)
         elif tool_name == TOOL_FAMILY_SALE_SALES:
             self.clear_pending_search_tool(turn_context)
             attachment = create_family_sale_form_card()
@@ -4368,6 +4472,17 @@ class RelayBot(ActivityHandler):
             await turn_context.send_activity("페이지 번호가 올바르지 않습니다.")
             return
 
+        search_mode = str(submit_value.get("search_mode") or "").strip()
+        search_value = str(submit_value.get("search_value") or "").strip()
+        if search_mode == "all":
+            search_value = ""
+        elif search_mode == "keyword" and len(search_value) < 2:
+            await turn_context.send_activity("검색어는 최소 2글자 이상 입력해주세요.")
+            return
+        if len(search_value) > 100:
+            await turn_context.send_activity("검색어는 100자 이하로 입력해주세요.")
+            return
+
         teams_account_id, _ = await get_teams_account(turn_context)
         if not teams_account_id:
             await turn_context.send_activity(
@@ -4392,6 +4507,7 @@ class RelayBot(ActivityHandler):
         print(
             "[HPOINT EVENT API REQUEST]"
             f" store_code={selected_store_code}"
+            f" search_value={search_value}"
             f" page={page} user_id={teams_account_id}",
             flush=True,
         )
@@ -4402,6 +4518,7 @@ class RelayBot(ActivityHandler):
                 target_url=CONFIG.HPOINT_EVENT_LOOKUP_API_URL,
                 user_id=teams_account_id,
                 selected_store_code=selected_store_code,
+                search_value=search_value,
                 page=page,
             )
         except Exception as error:
@@ -4451,6 +4568,11 @@ class RelayBot(ActivityHandler):
                 f"HTTP 상태: {status_code}\n내용: {error_message}"
             )
             return
+
+        # Older backend responses may not echo the active filter. Preserve it
+        # so paging buttons keep sending the same search condition.
+        response_json["searchValue"] = search_value
+        response_json.setdefault("storeCode", selected_store_code)
 
         await self.update_or_send_card(
             turn_context,
@@ -6097,7 +6219,10 @@ class RelayBot(ActivityHandler):
             )
             return
 
-        if action == "hpoint_event_page":
+        if action in (
+            "hpoint_event_search",
+            "hpoint_event_page",
+        ):
             await self.handle_hpoint_event_lookup(
                 turn_context,
                 submit_value,
@@ -6280,6 +6405,17 @@ class RelayBot(ActivityHandler):
             await self.handle_tool_select(
                 turn_context,
                 {"tool": TOOL_REFUND_STATUS},
+            )
+            return
+
+        if compact_command in {
+            "사은행사조회",
+            "현재행사조회",
+            "진행행사조회",
+        }:
+            await self.handle_tool_select(
+                turn_context,
+                {"tool": TOOL_HPOINT_EVENT_LOOKUP},
             )
             return
 

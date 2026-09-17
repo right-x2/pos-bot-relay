@@ -37,6 +37,7 @@ class RagRelayRouteTests(unittest.TestCase):
         chat_route = 'elseif (($Path -eq "/test") -or ($Path -eq "/api/rag/chat"))'
         self.assertIn(route, SCRIPT)
         self.assertIn('$TargetUrl = $HpointEventLookupUrl', SCRIPT)
+        self.assertIn('searchValue = $SearchValue', SCRIPT)
         self.assertLess(SCRIPT.index(route), SCRIPT.index(chat_route))
 
 

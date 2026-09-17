@@ -1,6 +1,6 @@
 Add-Type -AssemblyName System.Net.Http
 
-$RelayVersion = "2026-09-16-hpoint-event-v1"
+$RelayVersion = "2026-09-17-hpoint-event-search-v1"
 $ListenPort = 30002
 $ChatUrl = "http://10.103.201.164:8000/api/rag/chat"
 $RegisterUrl = "http://10.103.201.164:8000/api/posts/request"
@@ -490,6 +490,7 @@ try {
 
                 $UserId = ([string]$Incoming.userId).Trim()
                 $SelectedStoreCode = ([string]$Incoming.selectedStoreCode).Trim()
+                $SearchValue = ([string]$Incoming.searchValue).Trim()
                 if ([string]::IsNullOrWhiteSpace($UserId)) {
                     throw "Missing userId"
                 }
@@ -510,6 +511,7 @@ try {
                 $ForwardBody = [ordered]@{
                     userId = $UserId
                     selectedStoreCode = $SelectedStoreCode
+                    searchValue = $SearchValue
                     page = $Page
                 } | ConvertTo-Json -Depth 20 -Compress
             }
